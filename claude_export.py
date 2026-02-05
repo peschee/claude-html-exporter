@@ -516,14 +516,14 @@ body {
     font-size: 0.8125rem; color: #E0DFDB;
 }
 
-/* ── Collapsible output ── */
-details.tool-result-details summary { cursor: pointer; user-select: none; list-style: none; }
-details.tool-result-details summary::-webkit-details-marker { display: none; }
-details.tool-result-details summary .chevron {
+/* ── Collapsible blocks ── */
+details.collapsible summary { cursor: pointer; user-select: none; list-style: none; }
+details.collapsible summary::-webkit-details-marker { display: none; }
+details.collapsible summary .chevron {
     display: inline-block; transition: transform 0.15s ease;
     font-size: 0.6rem; margin-right: 0.25rem;
 }
-details.tool-result-details[open] summary .chevron { transform: rotate(90deg); }
+details.collapsible[open] summary .chevron { transform: rotate(90deg); }
 
 /* ── Divider ── */
 .msg-divider { border: none; border-top: 1px solid var(--divider); margin: 0; }
@@ -631,11 +631,22 @@ function renderAssistantMessage(container, msg) {
 
 /* ── Thinking Block ── */
 function renderThinking(block) {
-    var w = el('div', '', 'margin:0.75rem 0;padding:0.875rem 1rem;background:var(--thinking-bg);border-left:3px dashed var(--thinking-accent);border-radius:0 6px 6px 0;');
-    var lbl = el('div'); lbl.className = 'block-label'; lbl.style.cssText = 'color:var(--thinking-accent);margin-bottom:0.5rem;'; lbl.textContent = 'Thinking';
-    w.appendChild(lbl);
-    var c = el('div'); c.className = 'thinking-prose tool-scroll'; c.innerHTML = renderMarkdown(block.text); w.appendChild(c);
-    return w;
+    var details = document.createElement('details');
+    details.className = 'collapsible';
+    details.style.cssText = 'margin:0.75rem 0;background:var(--thinking-bg);border-left:3px dashed var(--thinking-accent);border-radius:0 6px 6px 0;overflow:hidden;';
+
+    var summary = document.createElement('summary');
+    summary.style.cssText = 'padding:0.625rem 1rem;display:flex;align-items:center;gap:0.375rem;';
+    var chevron = el('span', 'chevron'); chevron.textContent = '\u25b6';
+    summary.appendChild(chevron);
+    var lbl = el('span'); lbl.className = 'block-label'; lbl.style.color = 'var(--thinking-accent)'; lbl.textContent = 'Thinking';
+    summary.appendChild(lbl);
+    details.appendChild(summary);
+
+    var bd = el('div', 'thinking-prose tool-scroll', 'padding:0 1rem 0.875rem;');
+    bd.innerHTML = renderMarkdown(block.text);
+    details.appendChild(bd);
+    return details;
 }
 
 /* ── Tool Use Block ── */
@@ -666,7 +677,7 @@ function renderToolResult(block) {
     var br = err ? 'var(--error-border)' : 'var(--result-border)';
 
     var details = document.createElement('details');
-    details.className = 'tool-result-details';
+    details.className = 'collapsible';
     details.style.cssText = 'margin:0.25rem 0 0.75rem;background:'+bg+';border:1px solid '+br+';border-left:4px solid '+ac+';border-radius:0 6px 6px 0;overflow:hidden;';
 
     var summary = document.createElement('summary');
