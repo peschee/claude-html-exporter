@@ -383,72 +383,157 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-body { font-family: 'Inter', system-ui, sans-serif; }
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&display=swap');
 
-/* Markdown prose styles */
-.prose { line-height: 1.7; }
-.prose p { margin: 0.5em 0; }
+:root {
+    --user-accent: #D4613E;
+    --user-bg: #FBF4F1;
+    --user-label: #B8462A;
+    --assistant-accent: #3D405B;
+    --assistant-bg: #FFFFFF;
+    --thinking-accent: #8B7EC8;
+    --thinking-bg: #F6F4FB;
+    --thinking-border: #D4CEE8;
+    --tool-accent: #3A7CA5;
+    --tool-bg: #F0F5FA;
+    --tool-border: #C2D6E8;
+    --result-accent: #5A8A65;
+    --result-bg: #F1F7F2;
+    --result-border: #C0D9C5;
+    --error-accent: #B5454A;
+    --error-bg: #FBF1F1;
+    --error-border: #E0BFBF;
+    --page-bg: #F7F6F3;
+    --divider: #E8E6E1;
+    --text-primary: #2D2D2D;
+    --text-secondary: #6B6966;
+    --text-tertiary: #9C9891;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    background: var(--page-bg);
+    color: var(--text-primary);
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ── Prose (markdown content) ── */
+.prose { font-family: 'IBM Plex Serif', Georgia, serif; line-height: 1.75; font-size: 0.938rem; }
+.prose p { margin: 0.6em 0; }
 .prose p:first-child { margin-top: 0; }
 .prose p:last-child { margin-bottom: 0; }
 .prose ul, .prose ol { margin: 0.5em 0; padding-left: 1.5em; }
 .prose ul { list-style-type: disc; }
 .prose ol { list-style-type: decimal; }
-.prose li { margin: 0.25em 0; }
-.prose h1, .prose h2, .prose h3, .prose h4 { font-weight: 600; margin: 1em 0 0.5em; }
-.prose h1 { font-size: 1.5em; }
-.prose h2 { font-size: 1.25em; }
-.prose h3 { font-size: 1.1em; }
-.prose pre { margin: 0.75em 0; border-radius: 0.5rem; overflow-x: auto; }
-.prose code { font-size: 0.9em; }
+.prose li { margin: 0.2em 0; }
+.prose li > p { margin: 0.2em 0; }
+.prose h1, .prose h2, .prose h3, .prose h4 {
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-weight: 600; margin: 1.2em 0 0.4em; line-height: 1.3;
+}
+.prose h1 { font-size: 1.4em; }
+.prose h2 { font-size: 1.2em; }
+.prose h3 { font-size: 1.05em; }
+.prose pre {
+    margin: 0.75em 0; border-radius: 6px; overflow-x: auto;
+    background: #282c34; padding: 1em; border: 1px solid #1a1e24;
+}
+.prose pre > code {
+    background: none; padding: 0; color: #abb2bf;
+    font-family: 'IBM Plex Mono', monospace; font-size: 0.85em;
+}
+.prose code { font-family: 'IBM Plex Mono', monospace; font-size: 0.88em; }
 .prose :not(pre) > code {
-    background: rgba(0,0,0,0.06); padding: 0.15em 0.35em; border-radius: 0.25rem;
+    background: rgba(0,0,0,0.06); padding: 0.15em 0.4em; border-radius: 3px;
 }
-.prose pre > code { background: none; padding: 0; }
 .prose blockquote {
-    border-left: 3px solid #d1d5db; padding-left: 1em; margin: 0.75em 0;
-    color: #6b7280; font-style: italic;
+    border-left: 3px solid var(--divider); padding-left: 1em; margin: 0.75em 0;
+    color: var(--text-secondary); font-style: italic;
 }
-.prose table { border-collapse: collapse; margin: 0.75em 0; width: 100%; }
-.prose th, .prose td { border: 1px solid #e5e7eb; padding: 0.4em 0.75em; text-align: left; }
-.prose th { background: #f9fafb; font-weight: 600; }
-.prose a { color: #2563eb; text-decoration: underline; }
-.prose hr { border: none; border-top: 1px solid #e5e7eb; margin: 1em 0; }
-.prose img { max-width: 100%; border-radius: 0.5rem; }
+.prose table { border-collapse: collapse; margin: 0.75em 0; width: 100%; font-family: 'IBM Plex Sans', sans-serif; font-size: 0.9em; }
+.prose th, .prose td { border: 1px solid var(--divider); padding: 0.5em 0.75em; text-align: left; }
+.prose th { background: #f5f4f1; font-weight: 600; }
+.prose a { color: #3A7CA5; text-decoration: underline; text-underline-offset: 2px; }
+.prose hr { border: none; border-top: 1px solid var(--divider); margin: 1.2em 0; }
+.prose img { max-width: 100%; border-radius: 6px; }
 
-/* User bubble prose overrides */
-.user-prose :not(pre) > code { background: rgba(255,255,255,0.2); }
-.user-prose a { color: #bfdbfe; }
-.user-prose blockquote { border-left-color: rgba(255,255,255,0.4); color: #bfdbfe; }
-.user-prose th, .user-prose td { border-color: rgba(255,255,255,0.2); }
-.user-prose th { background: rgba(255,255,255,0.1); }
-
-/* Details/summary styles */
-details summary { cursor: pointer; user-select: none; }
-details summary::-webkit-details-marker { display: none; }
-details summary::before {
-    content: '\25B6'; display: inline-block; margin-right: 0.5em;
-    transition: transform 0.2s; font-size: 0.7em; vertical-align: middle;
+/* ── Thinking prose ── */
+.thinking-prose {
+    font-family: 'IBM Plex Serif', Georgia, serif;
+    font-style: italic; font-size: 0.875rem; line-height: 1.65;
+    color: #6B6280;
 }
-details[open] summary::before { transform: rotate(90deg); }
+.thinking-prose code { font-style: normal; }
+.thinking-prose pre > code { font-style: normal; }
 
-/* Tool content */
-.tool-content { max-height: 400px; overflow-y: auto; }
-.tool-content pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+/* ── Scrollable tool content ── */
+.tool-scroll { max-height: 350px; overflow-y: auto; }
+.tool-scroll::-webkit-scrollbar { width: 6px; }
+.tool-scroll::-webkit-scrollbar-track { background: transparent; }
+.tool-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+.tool-scroll::-webkit-scrollbar-thumb:hover { background: #aaa; }
+
+/* ── Labels ── */
+.role-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
+.block-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6875rem; font-weight: 500;
+    letter-spacing: 0.05em; text-transform: uppercase;
+}
+
+/* ── Tool formatting ── */
+.tool-input {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+}
+.tool-output {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.78rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+    color: var(--text-primary);
+}
+
+/* ── Session header ── */
+.session-header {
+    background: #2D2D2D; color: #F0EFEC;
+    border-bottom: 3px solid var(--user-accent);
+}
+.session-header .meta-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.625rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #8A8884;
+}
+.session-header .meta-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8125rem; color: #E0DFDB;
+}
+
+/* ── Divider ── */
+.msg-divider { border: none; border-top: 1px solid var(--divider); margin: 0; }
+
+/* ── Code highlight overrides ── */
+.prose pre .hljs { background: transparent; }
 </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body>
 
 <script type="application/json" id="conversation-data">{{JSON_DATA}}</script>
-
 <div id="app"></div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const raw = document.getElementById('conversation-data').textContent;
-    const data = JSON.parse(raw);
-    const messages = data.messages;
-    const metadata = data.metadata;
+    var raw = document.getElementById('conversation-data').textContent;
+    var data = JSON.parse(raw);
+    var messages = data.messages;
+    var metadata = data.metadata;
 
     marked.setOptions({
         highlight: function(code, lang) {
@@ -462,211 +547,217 @@ document.addEventListener('DOMContentLoaded', function() {
         gfm: true,
     });
 
-    const app = document.getElementById('app');
+    var app = document.getElementById('app');
 
-    // Header
-    const header = document.createElement('div');
-    header.className = 'sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 shadow-sm';
+    /* ── Header ── */
+    var header = document.createElement('div');
+    header.className = 'session-header';
+    var headerInner = document.createElement('div');
+    headerInner.className = 'max-w-[52rem] mx-auto px-6 py-5';
 
-    const headerInner = document.createElement('div');
-    headerInner.className = 'max-w-4xl mx-auto px-4 py-3';
+    var title = document.createElement('div');
+    title.style.cssText = 'font-family:"IBM Plex Sans",sans-serif;font-size:1.125rem;font-weight:600;margin-bottom:1rem;';
+    title.textContent = 'Claude Code Session';
+    headerInner.appendChild(title);
 
-    const headerRow = document.createElement('div');
-    headerRow.className = 'flex items-center justify-between flex-wrap gap-2';
-
-    // Left side: logo + title
-    const headerLeft = document.createElement('div');
-    headerLeft.className = 'flex items-center gap-3';
-
-    const logo = document.createElement('div');
-    logo.className = 'w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center';
-    const logoText = document.createElement('span');
-    logoText.className = 'text-white font-bold text-sm';
-    logoText.textContent = 'CC';
-    logo.appendChild(logoText);
-
-    const titleBlock = document.createElement('div');
-    const h1 = document.createElement('h1');
-    h1.className = 'text-sm font-semibold text-gray-900';
-    h1.textContent = 'Claude Code Session';
-    titleBlock.appendChild(h1);
-    if (metadata.cwd) {
-        const sub = document.createElement('p');
-        sub.className = 'text-xs text-gray-500';
-        sub.textContent = metadata.cwd;
-        titleBlock.appendChild(sub);
-    }
-
-    headerLeft.appendChild(logo);
-    headerLeft.appendChild(titleBlock);
-
-    // Right side: metadata chips
-    const headerRight = document.createElement('div');
-    headerRight.className = 'flex items-center gap-4 text-xs text-gray-500';
-
-    if (metadata.model) {
-        const chip = document.createElement('span');
-        chip.className = 'bg-gray-100 px-2 py-1 rounded font-mono';
-        chip.textContent = metadata.model;
-        headerRight.appendChild(chip);
-    }
-    if (metadata.git_branch) {
-        const chip = document.createElement('span');
-        chip.className = 'bg-gray-100 px-2 py-1 rounded';
-        chip.textContent = 'branch: ' + metadata.git_branch;
-        headerRight.appendChild(chip);
-    }
-    if (metadata.date) {
-        const chip = document.createElement('span');
-        chip.textContent = formatDate(metadata.date);
-        headerRight.appendChild(chip);
-    }
-
-    headerRow.appendChild(headerLeft);
-    headerRow.appendChild(headerRight);
-    headerInner.appendChild(headerRow);
+    var metaGrid = document.createElement('div');
+    metaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0.75rem 2rem;';
+    var metaFields = [];
+    if (metadata.date) metaFields.push(['Date', formatDate(metadata.date)]);
+    if (metadata.model) metaFields.push(['Model', metadata.model]);
+    if (metadata.cwd) metaFields.push(['Directory', metadata.cwd]);
+    if (metadata.git_branch) metaFields.push(['Branch', metadata.git_branch]);
+    if (metadata.session_id) metaFields.push(['Session', metadata.session_id.substring(0, 12) + '\u2026']);
+    metaFields.forEach(function(pair) {
+        var item = document.createElement('div');
+        var lbl = document.createElement('div'); lbl.className = 'meta-label'; lbl.textContent = pair[0];
+        var val = document.createElement('div'); val.className = 'meta-value'; val.textContent = pair[1];
+        item.appendChild(lbl); item.appendChild(val); metaGrid.appendChild(item);
+    });
+    headerInner.appendChild(metaGrid);
     header.appendChild(headerInner);
     app.appendChild(header);
 
-    // Chat container
-    const chat = document.createElement('div');
-    chat.className = 'max-w-4xl mx-auto px-4 py-6 space-y-4';
-    app.appendChild(chat);
+    /* ── Conversation body ── */
+    var body = document.createElement('div');
+    body.className = 'max-w-[52rem] mx-auto px-6 py-4';
+    app.appendChild(body);
 
-    // Render messages
-    messages.forEach(function(msg) {
-        if (msg.role === 'user') {
-            renderUserMessage(chat, msg);
-        } else if (msg.role === 'assistant') {
-            renderAssistantMessage(chat, msg);
-        }
+    messages.forEach(function(msg, idx) {
+        if (idx > 0) { var hr = document.createElement('hr'); hr.className = 'msg-divider'; body.appendChild(hr); }
+        if (msg.role === 'user') renderUserMessage(body, msg);
+        else if (msg.role === 'assistant') renderAssistantMessage(body, msg);
     });
 
-    // Scroll padding at bottom
-    const spacer = document.createElement('div');
-    spacer.className = 'h-16';
-    chat.appendChild(spacer);
+    var spacer = document.createElement('div');
+    spacer.style.height = '4rem';
+    body.appendChild(spacer);
 });
 
+/* ── User Message ── */
 function renderUserMessage(container, msg) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'flex justify-end';
-
-    const bubble = document.createElement('div');
-    bubble.className = 'max-w-[85%] bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 shadow-sm';
-
-    msg.blocks.forEach(function(block) {
-        if (block.type === 'text') {
-            const div = document.createElement('div');
-            div.className = 'prose user-prose text-sm text-white';
-            div.innerHTML = renderMarkdown(block.text);
-            bubble.appendChild(div);
-        }
+    var section = el('div', '', 'padding:1.5rem 0;border-left:4px solid var(--user-accent);padding-left:1.25rem;');
+    section.appendChild(labelRow('Human', 'var(--user-label)', msg.timestamp));
+    msg.blocks.forEach(function(b) {
+        if (b.type === 'text') { var d = el('div'); d.className = 'prose'; d.innerHTML = renderMarkdown(b.text); section.appendChild(d); }
     });
-
-    const ts = document.createElement('div');
-    ts.className = 'text-[10px] text-blue-200 mt-1 text-right';
-    ts.textContent = formatTime(msg.timestamp);
-    bubble.appendChild(ts);
-
-    wrapper.appendChild(bubble);
-    container.appendChild(wrapper);
+    container.appendChild(section);
 }
 
+/* ── Assistant Message ── */
 function renderAssistantMessage(container, msg) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'flex justify-start';
-
-    const card = document.createElement('div');
-    card.className = 'max-w-[85%] space-y-2';
-
-    msg.blocks.forEach(function(block) {
-        if (block.type === 'text') {
-            const div = document.createElement('div');
-            div.className = 'bg-white rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100';
-            const prose = document.createElement('div');
-            prose.className = 'prose text-sm text-gray-800';
-            prose.innerHTML = renderMarkdown(block.text);
-            div.appendChild(prose);
-            card.appendChild(div);
-        } else if (block.type === 'thinking') {
-            card.appendChild(createCollapsible('Thinking', block.text, 'purple'));
-        } else if (block.type === 'tool_use') {
-            var label = block.tool_name || 'Tool';
-            var body = '';
-            if (block.input) {
-                try { body = JSON.stringify(block.input, null, 2); }
-                catch(e) { body = String(block.input); }
-            }
-            card.appendChild(createCollapsible(label, body, 'amber'));
-        } else if (block.type === 'tool_result') {
-            var resultLabel = (block.tool_name || 'Result');
-            var isError = block.is_error;
-            var color = isError ? 'red' : 'green';
-            var prefix = isError ? 'Error' : 'Result';
-            card.appendChild(createCollapsible(prefix + ': ' + resultLabel, block.text || '(empty)', color));
+    var section = el('div', '', 'padding:1.5rem 0;padding-left:1.25rem;');
+    section.appendChild(labelRow('Claude', 'var(--assistant-accent)', msg.timestamp));
+    msg.blocks.forEach(function(b) {
+        if (b.type === 'text') {
+            var d = el('div'); d.className = 'prose'; d.style.marginBottom = '0.75rem';
+            d.innerHTML = renderMarkdown(b.text); section.appendChild(d);
+        } else if (b.type === 'thinking') { section.appendChild(renderThinking(b));
+        } else if (b.type === 'tool_use') { section.appendChild(renderToolUse(b));
+        } else if (b.type === 'tool_result') { section.appendChild(renderToolResult(b));
         }
     });
-
-    const ts = document.createElement('div');
-    ts.className = 'text-[10px] text-gray-400 mt-1';
-    ts.textContent = formatTime(msg.timestamp);
-    card.appendChild(ts);
-
-    wrapper.appendChild(card);
-    container.appendChild(wrapper);
+    container.appendChild(section);
 }
 
-function createCollapsible(title, content, color) {
-    var colors = {
-        purple: { bg: 'bg-purple-50', border: 'border-purple-200', title: 'text-purple-700', dot: 'bg-purple-400' },
-        amber:  { bg: 'bg-amber-50',  border: 'border-amber-200',  title: 'text-amber-700',  dot: 'bg-amber-400'  },
-        green:  { bg: 'bg-green-50',  border: 'border-green-200',  title: 'text-green-700',  dot: 'bg-green-400'  },
-        red:    { bg: 'bg-red-50',    border: 'border-red-200',    title: 'text-red-700',    dot: 'bg-red-400'    },
-    };
-    var c = colors[color] || colors.purple;
-
-    var details = document.createElement('details');
-    details.className = c.bg + ' ' + c.border + ' border rounded-xl overflow-hidden';
-
-    var summary = document.createElement('summary');
-    summary.className = 'px-3 py-2 text-xs font-medium ' + c.title + ' flex items-center gap-2';
-
-    var dot = document.createElement('span');
-    dot.className = 'w-2 h-2 rounded-full ' + c.dot + ' inline-block';
-    summary.appendChild(dot);
-    summary.appendChild(document.createTextNode(title));
-    details.appendChild(summary);
-
-    var body = document.createElement('div');
-    body.className = 'tool-content px-3 pb-3';
-    var pre = document.createElement('pre');
-    pre.className = 'text-xs text-gray-700 whitespace-pre-wrap break-words';
-    pre.textContent = content;
-    body.appendChild(pre);
-    details.appendChild(body);
-
-    return details;
+/* ── Thinking Block ── */
+function renderThinking(block) {
+    var w = el('div', '', 'margin:0.75rem 0;padding:0.875rem 1rem;background:var(--thinking-bg);border-left:3px dashed var(--thinking-accent);border-radius:0 6px 6px 0;');
+    var lbl = el('div'); lbl.className = 'block-label'; lbl.style.cssText = 'color:var(--thinking-accent);margin-bottom:0.5rem;'; lbl.textContent = 'Thinking';
+    w.appendChild(lbl);
+    var c = el('div'); c.className = 'thinking-prose tool-scroll'; c.innerHTML = renderMarkdown(block.text); w.appendChild(c);
+    return w;
 }
 
-function renderMarkdown(text) {
-    // Use marked to render markdown, then return the HTML string.
-    // Note: This renders user-owned local data, not untrusted web content.
-    return marked.parse(text);
+/* ── Tool Use Block ── */
+function renderToolUse(block) {
+    var w = el('div', '', 'margin:0.75rem 0;background:var(--tool-bg);border:1px solid var(--tool-border);border-left:4px solid var(--tool-accent);border-radius:0 6px 6px 0;overflow:hidden;');
+
+    var hdr = el('div', '', 'padding:0.5rem 0.875rem;display:flex;align-items:center;gap:0.5rem;border-bottom:1px solid var(--tool-border);');
+    var icon = el('span', '', 'display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;background:var(--tool-accent);color:white;border-radius:3px;font-size:0.65rem;font-weight:700;font-family:"IBM Plex Mono",monospace;');
+    icon.textContent = toolIcon(block.tool_name);
+    hdr.appendChild(icon);
+    var tl = el('span'); tl.className = 'block-label'; tl.style.color = 'var(--tool-accent)'; tl.textContent = block.tool_name || 'Tool';
+    hdr.appendChild(tl);
+    w.appendChild(hdr);
+
+    var bd = el('div', 'tool-scroll', 'padding:0.625rem 0.875rem;');
+    var pre = el('pre', 'tool-input', 'margin:0;');
+    var fmt = fmtInput(block.tool_name, block.input);
+    pre.textContent = fmt;
+    bd.appendChild(pre); w.appendChild(bd);
+    return w;
 }
 
-function formatDate(isoStr) {
-    try {
-        var d = new Date(isoStr);
-        return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch(e) { return isoStr; }
+/* ── Tool Result Block ── */
+function renderToolResult(block) {
+    var err = block.is_error;
+    var ac = err ? 'var(--error-accent)' : 'var(--result-accent)';
+    var bg = err ? 'var(--error-bg)' : 'var(--result-bg)';
+    var br = err ? 'var(--error-border)' : 'var(--result-border)';
+
+    var w = el('div', '', 'margin:0.25rem 0 0.75rem;background:'+bg+';border:1px solid '+br+';border-left:4px solid '+ac+';border-radius:0 6px 6px 0;overflow:hidden;');
+    var hdr = el('div', '', 'padding:0.375rem 0.875rem;display:flex;align-items:center;gap:0.5rem;');
+    var dot = el('span', '', 'width:0.4rem;height:0.4rem;border-radius:50%;background:'+ac+';flex-shrink:0;');
+    hdr.appendChild(dot);
+    var rl = el('span'); rl.className = 'block-label'; rl.style.color = ac;
+    rl.textContent = (err ? 'Error' : 'Output') + (block.tool_name ? ' \u2014 ' + block.tool_name : '');
+    hdr.appendChild(rl); w.appendChild(hdr);
+
+    var txt = block.text || '(empty)';
+    if (txt && txt !== '(empty)') {
+        var bd = el('div', 'tool-scroll', 'padding:0 0.875rem 0.5rem;border-top:1px solid '+br+';');
+        var pre = el('pre', 'tool-output', 'margin:0;padding-top:0.5rem;');
+        pre.textContent = txt; bd.appendChild(pre); w.appendChild(bd);
+    }
+    return w;
 }
 
-function formatTime(isoStr) {
-    try {
-        var d = new Date(isoStr);
-        return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    } catch(e) { return ''; }
+/* ── Helpers ── */
+function el(tag, cls, style) {
+    var e = document.createElement(tag || 'div');
+    if (cls) e.className = cls;
+    if (style) e.style.cssText = style;
+    return e;
+}
+
+function labelRow(name, color, timestamp) {
+    var row = el('div', '', 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;');
+    var lbl = el('span'); lbl.className = 'role-label'; lbl.style.color = color; lbl.textContent = name;
+    row.appendChild(lbl);
+    if (timestamp) {
+        var ts = el('span', '', 'font-family:"IBM Plex Mono",monospace;font-size:0.6875rem;color:var(--text-tertiary);');
+        ts.textContent = formatTime(timestamp); row.appendChild(ts);
+    }
+    return row;
+}
+
+function fmtInput(tool, input) {
+    if (!input) return '';
+    var p;
+    switch (tool) {
+        case 'Bash':
+            p = [];
+            if (input.description) p.push('\u25b8 ' + input.description);
+            if (input.command) p.push('$ ' + input.command);
+            if (input.timeout) p.push('timeout: ' + input.timeout + 'ms');
+            return p.length ? p.join('\n') : stringify(input);
+        case 'Read':
+            p = [];
+            if (input.file_path) p.push('\u25b8 ' + input.file_path);
+            if (input.offset) p.push('offset: ' + input.offset);
+            if (input.limit) p.push('limit: ' + input.limit);
+            return p.join('\n');
+        case 'Write':
+            return input.file_path ? '\u25b8 ' + input.file_path : stringify(input);
+        case 'Edit':
+            return input.file_path ? '\u25b8 ' + input.file_path : stringify(input);
+        case 'Glob':
+            p = [];
+            if (input.pattern) p.push('pattern: ' + input.pattern);
+            if (input.path) p.push('path: ' + input.path);
+            return p.join('\n');
+        case 'Grep':
+            p = [];
+            if (input.pattern) p.push('/' + input.pattern + '/');
+            if (input.path) p.push('in: ' + input.path);
+            if (input.glob) p.push('glob: ' + input.glob);
+            return p.join('\n');
+        case 'Task':
+            p = [];
+            if (input.description) p.push('\u25b8 ' + input.description);
+            if (input.subagent_type) p.push('agent: ' + input.subagent_type);
+            return p.length ? p.join('\n') : stringify(input);
+        case 'WebFetch':
+            p = [];
+            if (input.url) p.push('\u25b8 ' + input.url);
+            if (input.prompt) p.push('prompt: ' + input.prompt);
+            return p.join('\n');
+        case 'WebSearch':
+            return input.query ? '\u25b8 ' + input.query : stringify(input);
+        default:
+            return stringify(input);
+    }
+}
+
+function toolIcon(name) {
+    var m = {'Bash':'$','Read':'R','Write':'W','Edit':'E','Glob':'G','Grep':'/','Task':'T','WebFetch':'W','WebSearch':'S','Skill':'SK'};
+    return m[name] || (name ? name.charAt(0) : '?');
+}
+
+function stringify(o) { try { return JSON.stringify(o, null, 2); } catch(e) { return String(o); } }
+
+// Note: renderMarkdown processes user-owned local data, not untrusted web content.
+function renderMarkdown(t) { return marked.parse(t); }
+
+function formatDate(s) {
+    try { var d = new Date(s); return d.toLocaleDateString('en-US', {weekday:'short',year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
+    catch(e) { return s; }
+}
+
+function formatTime(s) {
+    try { var d = new Date(s); return d.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'}); }
+    catch(e) { return ''; }
 }
 </script>
 </body>
