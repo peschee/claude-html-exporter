@@ -11,10 +11,12 @@ Usage:
 """
 
 import argparse
+import curses
 import json
 import os
 import re
 import sys
+from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +62,7 @@ def find_sessions(project_filter=None):
                         "created": entry.get("created", ""),
                         "modified": entry.get("modified", ""),
                         "git_branch": entry.get("gitBranch", ""),
+                        "message_count": entry.get("messageCount", 0),
                     })
                 continue
             except (json.JSONDecodeError, KeyError):
@@ -78,6 +81,7 @@ def find_sessions(project_filter=None):
                 "created": info.get("created", ""),
                 "modified": "",
                 "git_branch": info.get("git_branch", ""),
+                "message_count": 0,
             })
 
     return sessions
@@ -101,6 +105,86 @@ def _read_session_stub(path):
     except Exception:
         pass
     return {}
+
+
+def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
+    """Read first lines of a JSONL to extract metadata + message preview.
+
+    Returns dict with keys: session_id, model, date, git_branch, cwd, messages.
+    Each message is {role, text} with text truncated to max_chars.
+    """
+    preview = {
+        "session_id": "", "model": "", "date": "", "git_branch": "",
+        "cwd": "", "messages": [],
+    }
+    try:
+        with open(path) as f:
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if not preview["session_id"] and obj.get("sessionId"):
+                    preview["session_id"] = obj["sessionId"]
+                if not preview["git_branch"] and obj.get("gitBranch"):
+                    preview["git_branch"] = obj["gitBranch"]
+                if not preview["cwd"] and obj.get("cwd"):
+                    preview["cwd"] = obj["cwd"]
+                if not preview["date"] and obj.get("timestamp"):
+                    preview["date"] = obj["timestamp"]
+
+                if len(preview["messages"]) >= max_messages:
+                    continue
+
+                if obj.get("type") == "assistant":
+                    msg = obj.get("message", {})
+                    if not preview["model"] and msg.get("model"):
+                        preview["model"] = msg["model"]
+                    content = msg.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if block.get("type") == "text":
+                                text = block.get("text", "").strip()
+                                if text:
+                                    if len(text) > max_chars:
+                                        text = text[:max_chars] + "..."
+                                    preview["messages"].append({
+                                        "role": "Claude", "text": text,
+                                    })
+                                    break
+                elif obj.get("type") == "user":
+                    msg = obj.get("message", {})
+                    content = msg.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        text = content.strip()
+                        if len(text) > max_chars:
+                            text = text[:max_chars] + "..."
+                        preview["messages"].append({
+                            "role": "Human", "text": text,
+                        })
+                    elif isinstance(content, list):
+                        # Skip tool_result blocks
+                        if any(b.get("type") == "tool_result" for b in content):
+                            continue
+                        for block in content:
+                            if block.get("type") == "text":
+                                text = block.get("text", "").strip()
+                                if text:
+                                    if len(text) > max_chars:
+                                        text = text[:max_chars] + "..."
+                                    preview["messages"].append({
+                                        "role": "Human", "text": text,
+                                    })
+                                    break
+    except Exception:
+        pass
+    return preview
 
 
 def resolve_session(arg):
@@ -792,6 +876,629 @@ function formatTime(s) {
 
 
 # ---------------------------------------------------------------------------
+# TUI helpers
+# ---------------------------------------------------------------------------
+
+ListItem = namedtuple("ListItem", ["kind", "data", "project"])
+
+
+def _display_project_name(session):
+    """Format project name from session path for display."""
+    pp = session.get("project_path", "") or session.get("project", "")
+    if not pp:
+        return session.get("project", "unknown")
+    # Convert /Users/foo/Projects/bar to bar
+    parts = pp.rstrip("/").split("/")
+    # Take last 2 meaningful segments
+    meaningful = [p for p in parts if p and p not in ("Users",)]
+    if len(meaningful) >= 2:
+        return "/".join(meaningful[-2:])
+    return meaningful[-1] if meaningful else pp
+
+
+def _truncate(text, width):
+    """Truncate text with ellipsis if longer than width."""
+    if len(text) <= width:
+        return text
+    return text[:max(0, width - 3)] + "..." if width > 3 else text[:width]
+
+
+# ---------------------------------------------------------------------------
+# TUI: Session Browser
+# ---------------------------------------------------------------------------
+
+class SessionBrowser:
+    """Interactive curses-based session browser."""
+
+    MIN_WIDTH = 80
+    MIN_HEIGHT = 20
+
+    def __init__(self, stdscr, project_filter=None):
+        self.stdscr = stdscr
+        self.project_filter = project_filter
+        self.cursor = 0
+        self.scroll_offset = 0
+        self.preview_scroll = 0
+        self.preview_focus = False
+        self.filter_mode = False
+        self.filter_text = ""
+        self.show_help = False
+        self.status_message = ""
+        self.status_timeout = 0
+        self.collapsed = set()  # collapsed project names
+        self.sessions = []
+        self.items = []         # flat list of ListItem
+        self._preview_cache = {}
+        self._preview_cache_order = []
+        self._cache_max = 20
+
+    def run(self):
+        """Main entry point — called inside curses.wrapper."""
+        curses.curs_set(0)
+        self.stdscr.timeout(100)  # 100ms for responsive resize
+        self._setup_colors()
+        self._load_sessions()
+        self._build_items()
+
+        while True:
+            h, w = self.stdscr.getmaxyx()
+            if h < self.MIN_HEIGHT or w < self.MIN_WIDTH:
+                self._check_terminal_size(h, w)
+            else:
+                self._draw(h, w)
+
+            key = self.stdscr.getch()
+            if key == -1:
+                # Tick status timeout
+                if self.status_timeout > 0:
+                    self.status_timeout -= 1
+                    if self.status_timeout == 0:
+                        self.status_message = ""
+                continue
+
+            if self.show_help:
+                self.show_help = False
+                continue
+
+            if self.filter_mode:
+                if self._handle_filter_key(key):
+                    continue
+            else:
+                result = self._handle_key(key)
+                if result == "quit":
+                    return
+
+    def _setup_colors(self):
+        """Initialize color pairs with graceful fallback."""
+        try:
+            curses.start_color()
+            curses.use_default_colors()
+            # 1: title bar
+            curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)
+            # 2: status bar
+            curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
+            # 3: selected item
+            curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_WHITE)
+            # 4: project header
+            curses.init_pair(4, curses.COLOR_YELLOW, -1)
+            # 5: session id
+            curses.init_pair(5, curses.COLOR_CYAN, -1)
+            # 6: date
+            curses.init_pair(6, curses.COLOR_GREEN, -1)
+            # 7: preview label
+            curses.init_pair(7, curses.COLOR_YELLOW, -1)
+            # 8: Human role
+            curses.init_pair(8, curses.COLOR_RED, -1)
+            # 9: Claude role
+            curses.init_pair(9, curses.COLOR_BLUE, -1)
+            # 10: status message
+            curses.init_pair(10, curses.COLOR_GREEN, -1)
+            self.has_colors = True
+        except curses.error:
+            self.has_colors = False
+
+    def _color(self, pair_num, extra=0):
+        """Get color attribute, falling back to bold/reverse."""
+        if self.has_colors:
+            return curses.color_pair(pair_num) | extra
+        if pair_num in (1, 2, 3):
+            return curses.A_REVERSE | extra
+        return curses.A_BOLD | extra
+
+    def _check_terminal_size(self, h, w):
+        """Show friendly message if terminal is too small."""
+        self.stdscr.erase()
+        msg = f"Terminal too small ({w}x{h}). Need {self.MIN_WIDTH}x{self.MIN_HEIGHT}."
+        try:
+            y = h // 2
+            x = max(0, (w - len(msg)) // 2)
+            self._safe_addnstr(y, x, msg, w, curses.A_BOLD)
+        except curses.error:
+            pass
+        self.stdscr.refresh()
+
+    def _load_sessions(self):
+        """Load sessions using existing find_sessions."""
+        self.sessions = find_sessions(project_filter=self.project_filter)
+        # Sort by created date descending within each project
+        self.sessions.sort(key=lambda s: s.get("created", ""), reverse=True)
+
+    def _build_items(self):
+        """Build flat list of ListItem from sessions, applying filter and collapse."""
+        # Group by display project name
+        by_project = {}
+        order = []
+        for s in self.sessions:
+            pname = _display_project_name(s)
+            # Apply filter
+            if self.filter_text:
+                ft = self.filter_text.lower()
+                searchable = " ".join([
+                    pname, s.get("session_id", ""), s.get("first_prompt", ""),
+                    s.get("git_branch", ""),
+                ]).lower()
+                if ft not in searchable:
+                    continue
+            if pname not in by_project:
+                by_project[pname] = []
+                order.append(pname)
+            by_project[pname].append(s)
+
+        self.items = []
+        for pname in order:
+            sess_list = by_project[pname]
+            self.items.append(ListItem(kind="header", data=pname, project=pname))
+            if pname not in self.collapsed:
+                for s in sess_list:
+                    self.items.append(ListItem(kind="session", data=s, project=pname))
+
+        # Clamp cursor
+        if self.items:
+            self.cursor = min(self.cursor, len(self.items) - 1)
+            self.cursor = max(0, self.cursor)
+        else:
+            self.cursor = 0
+
+    def _draw(self, h, w):
+        """Main draw orchestrator."""
+        self.stdscr.erase()
+
+        left_w = max(20, int(w * 0.4))
+        right_w = w - left_w
+
+        self._draw_title_bar(w)
+        self._draw_status_bar(h, w)
+
+        content_h = h - 2  # minus title and status bars
+        self._draw_left_pane(1, 0, content_h, left_w)
+        self._draw_right_pane(1, left_w, content_h, right_w)
+
+        # Draw vertical separator
+        for y in range(1, h - 1):
+            self._safe_addnstr(y, left_w - 1, "|", 1, curses.A_DIM)
+
+        if self.show_help:
+            self._draw_help_overlay(h, w)
+
+        self.stdscr.refresh()
+
+    def _draw_title_bar(self, w):
+        """Draw title bar at top."""
+        count = sum(1 for item in self.items if item.kind == "session")
+        title = " Session Browser"
+        right = f"({count} sessions)  ? for help "
+        padding = w - len(title) - len(right)
+        if padding < 0:
+            padding = 0
+        bar = title + " " * padding + right
+        self._safe_addnstr(0, 0, bar.ljust(w), w, self._color(1, curses.A_BOLD))
+
+    def _draw_status_bar(self, h, w):
+        """Draw status bar at bottom."""
+        if self.filter_mode:
+            bar = f" /:{self.filter_text}_"
+            bar = bar.ljust(w)
+        elif self.status_message:
+            bar = f" {self.status_message}".ljust(w)
+        else:
+            if self.preview_focus:
+                bar = " Tab:List  j/k:Scroll preview  q:Quit"
+            else:
+                bar = " j/k:Navigate  /:Filter  Enter:Export  Tab:Preview  q:Quit"
+            bar = bar.ljust(w)
+        attr = self._color(2)
+        if self.status_message and not self.filter_mode:
+            attr = self._color(10, curses.A_BOLD)
+        self._safe_addnstr(h - 1, 0, bar, w, attr)
+
+    def _draw_left_pane(self, top, left, height, width):
+        """Render the session list in the left pane."""
+        usable_w = width - 2  # 1 for left margin, 1 for separator
+
+        self._ensure_cursor_visible(height)
+
+        for i in range(height):
+            idx = self.scroll_offset + i
+            y = top + i
+            if idx >= len(self.items):
+                break
+
+            item = self.items[idx]
+            is_selected = (idx == self.cursor) and not self.preview_focus
+
+            if item.kind == "header":
+                collapsed = item.project in self.collapsed
+                marker = "[+]" if collapsed else "[-]"
+                text = f" {marker} {item.data}"
+                text = _truncate(text, usable_w)
+                attr = self._color(4, curses.A_BOLD)
+                if is_selected:
+                    attr = self._color(3, curses.A_BOLD)
+                self._safe_addnstr(y, left, text.ljust(usable_w + 1), usable_w + 1, attr)
+            else:
+                s = item.data
+                sid = s["session_id"][:8]
+                date = s.get("created", "")[:10] or "???"
+                # Format date shorter: Feb 05
+                try:
+                    dt = datetime.fromisoformat(date)
+                    date = dt.strftime("%b %d")
+                except Exception:
+                    date = date[:6]
+                prompt = s.get("first_prompt", "")
+                # Calculate space for prompt
+                prefix = f"   {sid}  {date}  "
+                prompt_w = max(0, usable_w - len(prefix))
+                prompt = _truncate(prompt.replace("\n", " "), prompt_w)
+                text = prefix + prompt
+
+                if is_selected:
+                    attr = self._color(3)
+                    self._safe_addnstr(y, left, text.ljust(usable_w + 1), usable_w + 1, attr)
+                else:
+                    # Color parts differently
+                    self._safe_addnstr(y, left, " " * (usable_w + 1), usable_w + 1, 0)
+                    self._safe_addnstr(y, left, "   ", 3, 0)
+                    self._safe_addnstr(y, left + 3, sid, len(sid), self._color(5))
+                    self._safe_addnstr(y, left + 3 + len(sid), "  ", 2, 0)
+                    self._safe_addnstr(y, left + 5 + len(sid), date, len(date), self._color(6))
+                    self._safe_addnstr(y, left + 5 + len(sid) + len(date), "  ", 2, 0)
+                    p_start = left + 7 + len(sid) + len(date)
+                    remaining = usable_w + 1 - (p_start - left)
+                    if remaining > 0:
+                        self._safe_addnstr(y, p_start, prompt, remaining, 0)
+
+    def _draw_right_pane(self, top, left, height, width):
+        """Render metadata + message preview in the right pane."""
+        usable_w = width - 2  # margins
+
+        # Find currently selected session
+        session = None
+        if 0 <= self.cursor < len(self.items):
+            item = self.items[self.cursor]
+            if item.kind == "session":
+                session = item.data
+            elif item.kind == "header":
+                # Find first session under this header
+                for j in range(self.cursor + 1, len(self.items)):
+                    if self.items[j].kind == "session" and self.items[j].project == item.project:
+                        session = self.items[j].data
+                        break
+
+        if not session:
+            msg = "No session selected"
+            self._safe_addnstr(top + height // 2, left + (width - len(msg)) // 2, msg, len(msg), curses.A_DIM)
+            return
+
+        preview = self._get_preview(session)
+        lines = []
+
+        # Metadata block
+        sid = session.get("session_id", "")
+        lines.append(("label", f"  Session:  {sid[:16]}"))
+        if preview.get("date"):
+            try:
+                dt_str = preview["date"]
+                dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                date_display = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                date_display = preview["date"][:16]
+            lines.append(("label", f"  Date:     {date_display}"))
+        if preview.get("git_branch"):
+            lines.append(("label", f"  Branch:   {preview['git_branch']}"))
+        if preview.get("model"):
+            lines.append(("label", f"  Model:    {preview['model']}"))
+        if preview.get("cwd"):
+            cwd = preview["cwd"]
+            max_cwd = usable_w - 12
+            if len(cwd) > max_cwd:
+                cwd = "..." + cwd[-(max_cwd - 3):]
+            lines.append(("label", f"  CWD:      {cwd}"))
+
+        lines.append(("text", ""))
+        lines.append(("divider", "  --- First Messages ---"))
+        lines.append(("text", ""))
+
+        # Message preview
+        for msg in preview.get("messages", []):
+            role = msg["role"]
+            lines.append(("role", f"  [{role}]"))
+            # Word wrap message text
+            wrapped = self._word_wrap(msg["text"], usable_w - 4)
+            for wl in wrapped:
+                lines.append(("text", f"  {wl}"))
+            lines.append(("text", ""))
+
+        # Apply preview scroll
+        max_scroll = max(0, len(lines) - height)
+        self.preview_scroll = min(self.preview_scroll, max_scroll)
+        self.preview_scroll = max(0, self.preview_scroll)
+
+        for i in range(height):
+            li = self.preview_scroll + i
+            y = top + i
+            if li >= len(lines):
+                break
+
+            kind, text = lines[li]
+            text = _truncate(text, usable_w)
+
+            if kind == "label":
+                self._safe_addnstr(y, left + 1, text, usable_w, self._color(7))
+            elif kind == "divider":
+                self._safe_addnstr(y, left + 1, text, usable_w, curses.A_DIM)
+            elif kind == "role":
+                role_color = self._color(8) if "Human" in text else self._color(9)
+                self._safe_addnstr(y, left + 1, text, usable_w, role_color | curses.A_BOLD)
+            else:
+                self._safe_addnstr(y, left + 1, text, usable_w, 0)
+
+    def _draw_help_overlay(self, h, w):
+        """Draw centered help box."""
+        help_lines = [
+            "Session Browser - Key Bindings",
+            "",
+            "  j/Down     Next session",
+            "  k/Up       Previous session",
+            "  PgDn       Page down",
+            "  PgUp       Page up",
+            "  g/Home     First session",
+            "  G/End      Last session",
+            "  Enter      Export session / toggle project",
+            "  h/Left     Collapse project group",
+            "  l/Right    Expand project group",
+            "  Tab        Toggle preview pane focus",
+            "  /          Filter sessions",
+            "  ?          This help",
+            "  q/Esc      Quit",
+        ]
+        box_w = max(len(l) for l in help_lines) + 4
+        box_h = len(help_lines) + 2
+        start_y = max(0, (h - box_h) // 2)
+        start_x = max(0, (w - box_w) // 2)
+
+        for i in range(box_h):
+            y = start_y + i
+            if y >= h:
+                break
+            if i == 0 or i == box_h - 1:
+                line = "+" + "-" * (box_w - 2) + "+"
+            else:
+                content = help_lines[i - 1] if i - 1 < len(help_lines) else ""
+                line = "| " + content.ljust(box_w - 4) + " |"
+            self._safe_addnstr(y, start_x, line, min(len(line), w - start_x),
+                             self._color(1, curses.A_BOLD))
+
+    def _handle_key(self, key):
+        """Handle key press in normal mode. Returns 'quit' to exit."""
+        if key in (ord('q'), 27):  # q or Esc
+            if self.preview_focus:
+                self.preview_focus = False
+                return None
+            return "quit"
+        elif key == ord('?'):
+            self.show_help = True
+        elif self.preview_focus:
+            # In preview focus mode, j/k scroll the preview pane
+            if key in (ord('j'), curses.KEY_DOWN):
+                self.preview_scroll += 1
+            elif key in (ord('k'), curses.KEY_UP):
+                self.preview_scroll = max(0, self.preview_scroll - 1)
+            elif key == curses.KEY_NPAGE:
+                self.preview_scroll += 10
+            elif key == curses.KEY_PPAGE:
+                self.preview_scroll = max(0, self.preview_scroll - 10)
+            elif key == 9:  # Tab
+                self.preview_focus = False
+            return None
+        elif key in (ord('j'), curses.KEY_DOWN):
+            self._move_cursor(1)
+        elif key in (ord('k'), curses.KEY_UP):
+            self._move_cursor(-1)
+        elif key == curses.KEY_NPAGE:  # PgDn
+            h, _ = self.stdscr.getmaxyx()
+            self._move_cursor(h - 4)
+        elif key == curses.KEY_PPAGE:  # PgUp
+            h, _ = self.stdscr.getmaxyx()
+            self._move_cursor(-(h - 4))
+        elif key in (ord('g'), curses.KEY_HOME):
+            self.cursor = 0
+            self.scroll_offset = 0
+            self.preview_scroll = 0
+        elif key in (ord('G'), curses.KEY_END):
+            self.cursor = max(0, len(self.items) - 1)
+            self.preview_scroll = 0
+        elif key == 9:  # Tab
+            self.preview_focus = not self.preview_focus
+        elif key in (ord('h'), curses.KEY_LEFT):
+            self._collapse_current()
+        elif key in (ord('l'), curses.KEY_RIGHT):
+            self._expand_current()
+        elif key in (10, curses.KEY_ENTER):  # Enter
+            self._action_enter()
+        elif key == ord('/'):
+            self.filter_mode = True
+            self.filter_text = ""
+        return None
+
+    def _handle_filter_key(self, key):
+        """Handle key press in filter mode. Returns True to stay in filter mode."""
+        if key == 27:  # Esc: cancel filter
+            self.filter_mode = False
+            self.filter_text = ""
+            self._build_items()
+            return True
+        elif key in (10, curses.KEY_ENTER):  # Enter: confirm filter
+            self.filter_mode = False
+            return True
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            self.filter_text = self.filter_text[:-1]
+            self.cursor = 0
+            self.scroll_offset = 0
+            self._build_items()
+            return True
+        elif 32 <= key <= 126:  # printable ASCII
+            self.filter_text += chr(key)
+            self.cursor = 0
+            self.scroll_offset = 0
+            self._build_items()
+            return True
+        return True
+
+    def _move_cursor(self, delta):
+        """Move cursor by delta, clamping to valid range."""
+        if not self.items:
+            return
+        self.cursor = max(0, min(len(self.items) - 1, self.cursor + delta))
+        self.preview_scroll = 0
+
+    def _collapse_current(self):
+        """Collapse the project group of the current item."""
+        if 0 <= self.cursor < len(self.items):
+            project = self.items[self.cursor].project
+            self.collapsed.add(project)
+            self._build_items()
+
+    def _expand_current(self):
+        """Expand the project group of the current item."""
+        if 0 <= self.cursor < len(self.items):
+            project = self.items[self.cursor].project
+            self.collapsed.discard(project)
+            self._build_items()
+
+    def _action_enter(self):
+        """Handle Enter key: export session or toggle project header."""
+        if not self.items or self.cursor >= len(self.items):
+            return
+        item = self.items[self.cursor]
+        if item.kind == "header":
+            # Toggle collapse
+            if item.project in self.collapsed:
+                self.collapsed.discard(item.project)
+            else:
+                self.collapsed.add(item.project)
+            self._build_items()
+        elif item.kind == "session":
+            self._export_session(item.data)
+
+    def _export_session(self, session):
+        """Export selected session to HTML."""
+        path = session.get("path", "")
+        if not path or not os.path.exists(path):
+            self.status_message = "Error: session file not found"
+            self.status_timeout = 30
+            return
+
+        try:
+            lines = parse_jsonl(path)
+            metadata = extract_metadata(lines)
+            messages = build_conversation(lines)
+
+            if not messages:
+                self.status_message = "No messages found in session"
+                self.status_timeout = 30
+                return
+
+            html = generate_html(messages, metadata)
+            sid = metadata.get("session_id", "session")[:12]
+            output_path = f"claude-session-{sid}.html"
+
+            with open(output_path, "w") as f:
+                f.write(html)
+
+            self.status_message = f"Exported {len(messages)} messages to {output_path}"
+            self.status_timeout = 50
+        except Exception as e:
+            self.status_message = f"Export error: {e}"
+            self.status_timeout = 50
+
+    def _get_preview(self, session):
+        """Get preview data for a session, using LRU cache."""
+        sid = session.get("session_id", "")
+        if sid in self._preview_cache:
+            return self._preview_cache[sid]
+
+        path = session.get("path", "")
+        if not path or not os.path.exists(path):
+            return {"session_id": sid, "model": "", "date": "", "git_branch": "",
+                    "cwd": "", "messages": []}
+
+        preview = _read_preview(path)
+
+        # LRU eviction
+        if len(self._preview_cache_order) >= self._cache_max:
+            oldest = self._preview_cache_order.pop(0)
+            self._preview_cache.pop(oldest, None)
+        self._preview_cache[sid] = preview
+        self._preview_cache_order.append(sid)
+
+        return preview
+
+    def _safe_addnstr(self, y, x, text, max_len, attr=0):
+        """Safely write text to screen, handling edge cases."""
+        h, w = self.stdscr.getmaxyx()
+        if y < 0 or y >= h or x < 0 or x >= w:
+            return
+        # Encode to ASCII for safety (curses on macOS can crash on emoji/CJK)
+        safe_text = text.encode("ascii", errors="replace").decode("ascii")
+        available = w - x
+        n = min(max_len, available)
+        if n <= 0:
+            return
+        try:
+            self.stdscr.addnstr(y, x, safe_text, n, attr)
+        except curses.error:
+            pass  # writing to bottom-right corner raises error
+
+    def _ensure_cursor_visible(self, visible_height):
+        """Adjust scroll_offset so cursor is visible."""
+        if self.cursor < self.scroll_offset:
+            self.scroll_offset = self.cursor
+        elif self.cursor >= self.scroll_offset + visible_height:
+            self.scroll_offset = self.cursor - visible_height + 1
+        self.scroll_offset = max(0, self.scroll_offset)
+
+    def _word_wrap(self, text, width):
+        """Simple word wrap for preview text."""
+        if width <= 0:
+            return [text]
+        lines = []
+        for paragraph in text.split("\n"):
+            if not paragraph:
+                lines.append("")
+                continue
+            while len(paragraph) > width:
+                # Find last space before width
+                break_at = paragraph.rfind(" ", 0, width)
+                if break_at <= 0:
+                    break_at = width
+                lines.append(paragraph[:break_at])
+                paragraph = paragraph[break_at:].lstrip()
+            lines.append(paragraph)
+        return lines
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -846,12 +1553,26 @@ def cmd_export(args):
     print(f"Exported {len(messages)} messages to {output_path}")
 
 
+def cmd_browse(args):
+    """Launch interactive TUI session browser."""
+    def _run(stdscr):
+        browser = SessionBrowser(stdscr, project_filter=args.project)
+        browser.run()
+
+    try:
+        curses.wrapper(_run)
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Export Claude Code sessions to standalone HTML files."
     )
 
     parser.add_argument("--list", action="store_true", help="List available sessions")
+    parser.add_argument("--browse", action="store_true",
+                        help="Launch interactive TUI session browser")
     parser.add_argument("-p", "--project", help="Filter projects by name substring")
     parser.add_argument("session", nargs="?", help="Session UUID or path to .jsonl file")
     parser.add_argument("-o", "--output", help="Output HTML file path")
@@ -860,8 +1581,13 @@ def main():
 
     if args.list:
         cmd_list(args)
+    elif args.browse:
+        cmd_browse(args)
     elif args.session:
         cmd_export(args)
+    elif sys.stdout.isatty() and sys.stdin.isatty():
+        # Default to TUI when running interactively with no args
+        cmd_browse(args)
     else:
         parser.print_help()
 
