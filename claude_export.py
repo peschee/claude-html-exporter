@@ -47,14 +47,17 @@ def find_sessions(project_filter=None):
             continue
 
         # Try sessions-index.json first
+        indexed_ids = set()
         index_path = project_dir / "sessions-index.json"
         if index_path.exists():
             try:
                 with open(index_path) as f:
                     index = json.load(f)
                 for entry in index.get("entries", []):
+                    sid = entry.get("sessionId", "")
+                    indexed_ids.add(sid)
                     sessions.append({
-                        "session_id": entry.get("sessionId", ""),
+                        "session_id": sid,
                         "project": project_name,
                         "project_path": entry.get("projectPath", ""),
                         "path": entry.get("fullPath", ""),
@@ -64,13 +67,14 @@ def find_sessions(project_filter=None):
                         "git_branch": entry.get("gitBranch", ""),
                         "message_count": entry.get("messageCount", 0),
                     })
-                continue
             except (json.JSONDecodeError, KeyError):
                 pass
 
-        # Fallback: scan .jsonl files directly
+        # Scan .jsonl files not covered by the index
         for jsonl_path in sorted(project_dir.glob("*.jsonl")):
             session_id = jsonl_path.stem
+            if session_id in indexed_ids:
+                continue
             info = _read_session_stub(jsonl_path)
             sessions.append({
                 "session_id": session_id,
