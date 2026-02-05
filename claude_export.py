@@ -516,6 +516,15 @@ body {
     font-size: 0.8125rem; color: #E0DFDB;
 }
 
+/* ── Collapsible output ── */
+details.tool-result-details summary { cursor: pointer; user-select: none; list-style: none; }
+details.tool-result-details summary::-webkit-details-marker { display: none; }
+details.tool-result-details summary .chevron {
+    display: inline-block; transition: transform 0.15s ease;
+    font-size: 0.6rem; margin-right: 0.25rem;
+}
+details.tool-result-details[open] summary .chevron { transform: rotate(90deg); }
+
 /* ── Divider ── */
 .msg-divider { border: none; border-top: 1px solid var(--divider); margin: 0; }
 
@@ -553,7 +562,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var header = document.createElement('div');
     header.className = 'session-header';
     var headerInner = document.createElement('div');
-    headerInner.className = 'max-w-[52rem] mx-auto px-6 py-5';
+    headerInner.className = 'max-w-[52rem] mx-auto px-8 py-6';
 
     var title = document.createElement('div');
     title.style.cssText = 'font-family:"IBM Plex Sans",sans-serif;font-size:1.125rem;font-weight:600;margin-bottom:1rem;';
@@ -656,21 +665,28 @@ function renderToolResult(block) {
     var bg = err ? 'var(--error-bg)' : 'var(--result-bg)';
     var br = err ? 'var(--error-border)' : 'var(--result-border)';
 
-    var w = el('div', '', 'margin:0.25rem 0 0.75rem;background:'+bg+';border:1px solid '+br+';border-left:4px solid '+ac+';border-radius:0 6px 6px 0;overflow:hidden;');
-    var hdr = el('div', '', 'padding:0.375rem 0.875rem;display:flex;align-items:center;gap:0.5rem;');
+    var details = document.createElement('details');
+    details.className = 'tool-result-details';
+    details.style.cssText = 'margin:0.25rem 0 0.75rem;background:'+bg+';border:1px solid '+br+';border-left:4px solid '+ac+';border-radius:0 6px 6px 0;overflow:hidden;';
+
+    var summary = document.createElement('summary');
+    summary.style.cssText = 'padding:0.375rem 0.875rem;display:flex;align-items:center;gap:0.5rem;';
+    var chevron = el('span', 'chevron'); chevron.textContent = '\u25b6';
+    summary.appendChild(chevron);
     var dot = el('span', '', 'width:0.4rem;height:0.4rem;border-radius:50%;background:'+ac+';flex-shrink:0;');
-    hdr.appendChild(dot);
+    summary.appendChild(dot);
     var rl = el('span'); rl.className = 'block-label'; rl.style.color = ac;
     rl.textContent = (err ? 'Error' : 'Output') + (block.tool_name ? ' \u2014 ' + block.tool_name : '');
-    hdr.appendChild(rl); w.appendChild(hdr);
+    summary.appendChild(rl);
+    details.appendChild(summary);
 
     var txt = block.text || '(empty)';
     if (txt && txt !== '(empty)') {
         var bd = el('div', 'tool-scroll', 'padding:0 0.875rem 0.5rem;border-top:1px solid '+br+';');
         var pre = el('pre', 'tool-output', 'margin:0;padding-top:0.5rem;');
-        pre.textContent = txt; bd.appendChild(pre); w.appendChild(bd);
+        pre.textContent = txt; bd.appendChild(pre); details.appendChild(bd);
     }
-    return w;
+    return details;
 }
 
 /* ── Helpers ── */
