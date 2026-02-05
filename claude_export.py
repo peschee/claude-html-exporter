@@ -593,6 +593,7 @@ body {
 .session-header {
     background: #2D2D2D; color: #F0EFEC;
     border-bottom: 3px solid var(--user-accent);
+    padding: 1.5rem max(1.5rem, env(safe-area-inset-left));
 }
 .session-header .meta-label {
     font-family: 'IBM Plex Mono', monospace;
@@ -602,6 +603,10 @@ body {
 .session-header .meta-value {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 0.8125rem; color: #E0DFDB;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ── Collapsible blocks ── */
@@ -667,8 +672,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (metadata.session_id) metaFields.push(['Session', metadata.session_id.substring(0, 12) + '\u2026']);
     metaFields.forEach(function(pair) {
         var item = document.createElement('div');
+        item.style.minWidth = '0';
         var lbl = document.createElement('div'); lbl.className = 'meta-label'; lbl.textContent = pair[0];
         var val = document.createElement('div'); val.className = 'meta-value'; val.textContent = pair[1];
+        val.title = pair[1];
         item.appendChild(lbl); item.appendChild(val); metaGrid.appendChild(item);
     });
     headerInner.appendChild(metaGrid);
