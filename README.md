@@ -43,6 +43,18 @@ python claude_export.py path/to/session.jsonl
 
 Output files open in any modern browser. CDN resources (Tailwind CSS v4, marked.js, highlight.js, IBM Plex fonts) are loaded at view time.
 
+## Running Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+If your `python` already points to Python 3, you can also use:
+
+```bash
+python -m unittest discover -s tests
+```
+
 ## License
 
 [MIT](LICENSE)
