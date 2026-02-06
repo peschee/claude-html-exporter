@@ -189,5 +189,198 @@ class TestResolveSession(unittest.TestCase):
             self.assertEqual(Path(result).resolve(), session_file.resolve())
 
 
+class TestExtractMetadata(unittest.TestCase):
+    def test_extract_metadata_first_values(self):
+        lines = [
+            {
+                "sessionId": "sid-1",
+                "timestamp": "t1",
+                "gitBranch": "main",
+                "cwd": "/tmp",
+            },
+            {
+                "type": "assistant",
+                "message": {"model": "claude-v1"},
+            },
+            {
+                "sessionId": "sid-2",
+                "timestamp": "t2",
+                "gitBranch": "dev",
+                "cwd": "/other",
+            },
+            {
+                "type": "assistant",
+                "message": {"model": "claude-v2"},
+            },
+        ]
+
+        metadata = claude_export.extract_metadata(lines)
+        self.assertEqual(metadata["session_id"], "sid-1")
+        self.assertEqual(metadata["date"], "t1")
+        self.assertEqual(metadata["git_branch"], "main")
+        self.assertEqual(metadata["cwd"], "/tmp")
+        self.assertEqual(metadata["model"], "claude-v1")
+
+
+class TestReadSessionStub(unittest.TestCase):
+    def test_read_session_stub_first_user_prompt(self):
+        long_prompt = "x" * 250
+        lines = [
+            "not json",
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t1",
+                    "gitBranch": "main",
+                    "message": {"content": long_prompt},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t2",
+                    "message": {"content": "later"},
+                }
+            ),
+        ]
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(lines))
+            path = handle.name
+
+        try:
+            stub = claude_export._read_session_stub(path)
+            self.assertEqual(stub["created"], "t1")
+            self.assertEqual(stub["git_branch"], "main")
+            self.assertEqual(len(stub["first_prompt"]), 200)
+        finally:
+            os.unlink(path)
+
+
+class TestReadPreview(unittest.TestCase):
+    def test_read_preview_skips_tool_results_and_truncates(self):
+        lines = [
+            json.dumps(
+                {
+                    "sessionId": "sid-1",
+                    "gitBranch": "main",
+                    "cwd": "/tmp",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool1",
+                                "content": [{"type": "text", "text": "skip"}],
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello world"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "model": "claude-v1",
+                        "content": [
+                            {"type": "text", "text": "Assistant response goes here"}
+                        ],
+                    },
+                }
+            ),
+        ]
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(lines))
+            path = handle.name
+
+        try:
+            preview = claude_export._read_preview(
+                path, max_lines=10, max_messages=4, max_chars=5
+            )
+            self.assertEqual(preview["session_id"], "sid-1")
+            self.assertEqual(preview["git_branch"], "main")
+            self.assertEqual(preview["cwd"], "/tmp")
+            self.assertEqual(preview["date"], "2024-01-01T00:00:00Z")
+            self.assertEqual(preview["model"], "claude-v1")
+
+            self.assertEqual(len(preview["messages"]), 2)
+            self.assertEqual(preview["messages"][0]["role"], "Human")
+            self.assertEqual(preview["messages"][0]["text"], "Hello...")
+            self.assertEqual(preview["messages"][1]["role"], "Claude")
+            self.assertEqual(preview["messages"][1]["text"], "Assis...")
+        finally:
+            os.unlink(path)
+
+
+class TestFindSessions(unittest.TestCase):
+    def test_find_sessions_reads_index_and_jsonl(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_dir = root / "project-one"
+            project_dir.mkdir()
+
+            session_id = "sid-index"
+            session_path = project_dir / f"{session_id}.jsonl"
+            session_path.write_text("")
+            index_path = project_dir / "sessions-index.json"
+            index_path.write_text(
+                json.dumps(
+                    {
+                        "entries": [
+                            {
+                                "sessionId": session_id,
+                                "projectPath": "/tmp/project-one",
+                                "fullPath": str(session_path),
+                                "firstPrompt": "hello",
+                                "created": "t1",
+                                "modified": "t2",
+                                "gitBranch": "main",
+                                "messageCount": 2,
+                            }
+                        ]
+                    }
+                )
+            )
+
+            stub_id = "sid-stub"
+            stub_path = project_dir / f"{stub_id}.jsonl"
+            stub_path.write_text(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "timestamp": "t3",
+                        "gitBranch": "dev",
+                        "message": {"content": "prompt"},
+                    }
+                )
+            )
+
+            with patch.object(claude_export, "CLAUDE_DIR", root):
+                sessions = claude_export.find_sessions()
+
+        by_id = {session["session_id"]: session for session in sessions}
+        self.assertIn(session_id, by_id)
+        self.assertIn(stub_id, by_id)
+
+        indexed = by_id[session_id]
+        self.assertEqual(indexed["project"], "project-one")
+        self.assertEqual(indexed["path"], str(session_path))
+        self.assertEqual(indexed["message_count"], 2)
+
+        stub = by_id[stub_id]
+        self.assertEqual(stub["first_prompt"], "prompt")
+        self.assertEqual(stub["created"], "t3")
+        self.assertEqual(stub["git_branch"], "dev")
+        self.assertEqual(stub["message_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
