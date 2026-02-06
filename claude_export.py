@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import traceback
 from collections import namedtuple
 from datetime import datetime
 from pathlib import Path
@@ -23,11 +24,23 @@ from pathlib import Path
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 TRUNCATE_LIMIT = 50_000
+VERBOSE = False
+
+
+def _debug(message, exc=None):
+    if not VERBOSE:
+        return
+    if exc:
+        print(f"[debug] {message}: {exc}", file=sys.stderr)
+        traceback.print_exc()
+    else:
+        print(f"[debug] {message}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
 # Session discovery
 # ---------------------------------------------------------------------------
+
 
 def find_sessions(project_filter=None):
     """Scan ~/.claude/projects/ for sessions.
@@ -56,19 +69,21 @@ def find_sessions(project_filter=None):
                 for entry in index.get("entries", []):
                     sid = entry.get("sessionId", "")
                     indexed_ids.add(sid)
-                    sessions.append({
-                        "session_id": sid,
-                        "project": project_name,
-                        "project_path": entry.get("projectPath", ""),
-                        "path": entry.get("fullPath", ""),
-                        "first_prompt": entry.get("firstPrompt", ""),
-                        "created": entry.get("created", ""),
-                        "modified": entry.get("modified", ""),
-                        "git_branch": entry.get("gitBranch", ""),
-                        "message_count": entry.get("messageCount", 0),
-                    })
-            except (json.JSONDecodeError, KeyError):
-                pass
+                    sessions.append(
+                        {
+                            "session_id": sid,
+                            "project": project_name,
+                            "project_path": entry.get("projectPath", ""),
+                            "path": entry.get("fullPath", ""),
+                            "first_prompt": entry.get("firstPrompt", ""),
+                            "created": entry.get("created", ""),
+                            "modified": entry.get("modified", ""),
+                            "git_branch": entry.get("gitBranch", ""),
+                            "message_count": entry.get("messageCount", 0),
+                        }
+                    )
+            except (json.JSONDecodeError, KeyError, OSError) as exc:
+                _debug("sessions index read failed", exc)
 
         # Scan .jsonl files not covered by the index
         for jsonl_path in sorted(project_dir.glob("*.jsonl")):
@@ -76,17 +91,19 @@ def find_sessions(project_filter=None):
             if session_id in indexed_ids:
                 continue
             info = _read_session_stub(jsonl_path)
-            sessions.append({
-                "session_id": session_id,
-                "project": project_name,
-                "project_path": "",
-                "path": str(jsonl_path),
-                "first_prompt": info.get("first_prompt", ""),
-                "created": info.get("created", ""),
-                "modified": "",
-                "git_branch": info.get("git_branch", ""),
-                "message_count": 0,
-            })
+            sessions.append(
+                {
+                    "session_id": session_id,
+                    "project": project_name,
+                    "project_path": "",
+                    "path": str(jsonl_path),
+                    "first_prompt": info.get("first_prompt", ""),
+                    "created": info.get("created", ""),
+                    "modified": "",
+                    "git_branch": info.get("git_branch", ""),
+                    "message_count": 0,
+                }
+            )
 
     return sessions
 
@@ -96,7 +113,10 @@ def _read_session_stub(path):
     try:
         with open(path) as f:
             for line in f:
-                obj = json.loads(line)
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if obj.get("type") == "user":
                     msg = obj.get("message", {})
                     content = msg.get("content", "")
@@ -106,8 +126,8 @@ def _read_session_stub(path):
                         "created": obj.get("timestamp", ""),
                         "git_branch": obj.get("gitBranch", ""),
                     }
-    except Exception:
-        pass
+    except OSError as exc:
+        _debug("read session stub failed", exc)
     return {}
 
 
@@ -118,8 +138,12 @@ def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
     Each message is {role, text} with text truncated to max_chars.
     """
     preview = {
-        "session_id": "", "model": "", "date": "", "git_branch": "",
-        "cwd": "", "messages": [],
+        "session_id": "",
+        "model": "",
+        "date": "",
+        "git_branch": "",
+        "cwd": "",
+        "messages": [],
     }
     try:
         with open(path) as f:
@@ -158,9 +182,12 @@ def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
                                 if text:
                                     if len(text) > max_chars:
                                         text = text[:max_chars] + "..."
-                                    preview["messages"].append({
-                                        "role": "Claude", "text": text,
-                                    })
+                                    preview["messages"].append(
+                                        {
+                                            "role": "Claude",
+                                            "text": text,
+                                        }
+                                    )
                                     break
                 elif obj.get("type") == "user":
                     msg = obj.get("message", {})
@@ -169,9 +196,12 @@ def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
                         text = content.strip()
                         if len(text) > max_chars:
                             text = text[:max_chars] + "..."
-                        preview["messages"].append({
-                            "role": "Human", "text": text,
-                        })
+                        preview["messages"].append(
+                            {
+                                "role": "Human",
+                                "text": text,
+                            }
+                        )
                     elif isinstance(content, list):
                         # Skip tool_result blocks
                         if any(b.get("type") == "tool_result" for b in content):
@@ -182,12 +212,15 @@ def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
                                 if text:
                                     if len(text) > max_chars:
                                         text = text[:max_chars] + "..."
-                                    preview["messages"].append({
-                                        "role": "Human", "text": text,
-                                    })
+                                    preview["messages"].append(
+                                        {
+                                            "role": "Human",
+                                            "text": text,
+                                        }
+                                    )
                                     break
-    except Exception:
-        pass
+    except OSError as exc:
+        _debug("read preview failed", exc)
     return preview
 
 
@@ -203,6 +236,10 @@ def resolve_session(arg):
     if p.exists() and p.suffix == ".jsonl":
         return str(p.resolve())
 
+    if not CLAUDE_DIR.exists():
+        print("Error: ~/.claude/projects not found", file=sys.stderr)
+        sys.exit(1)
+
     # UUID lookup
     for project_dir in CLAUDE_DIR.iterdir():
         if not project_dir.is_dir():
@@ -211,6 +248,25 @@ def resolve_session(arg):
         if candidate.exists():
             return str(candidate)
 
+        index_path = project_dir / "sessions-index.json"
+        if index_path.exists():
+            try:
+                with open(index_path) as f:
+                    index = json.load(f)
+                for entry in index.get("entries", []):
+                    if entry.get("sessionId") != arg:
+                        continue
+                    full_path = entry.get("fullPath", "")
+                    if not full_path:
+                        continue
+                    full_candidate = Path(full_path)
+                    if not full_candidate.is_absolute():
+                        full_candidate = project_dir / full_candidate
+                    if full_candidate.exists():
+                        return str(full_candidate.resolve())
+            except (json.JSONDecodeError, OSError) as exc:
+                _debug("resolve session index failed", exc)
+
     print(f"Error: Could not find session '{arg}'", file=sys.stderr)
     sys.exit(1)
 
@@ -218,6 +274,7 @@ def resolve_session(arg):
 # ---------------------------------------------------------------------------
 # JSONL parsing
 # ---------------------------------------------------------------------------
+
 
 def parse_jsonl(path):
     """Read and parse all lines from a JSONL file."""
@@ -264,6 +321,7 @@ def extract_metadata(lines):
 # Conversation building
 # ---------------------------------------------------------------------------
 
+
 def build_conversation(lines):
     """Build a clean conversation from JSONL lines.
 
@@ -275,7 +333,8 @@ def build_conversation(lines):
     tool_map = {}  # tool_use_id -> tool_name
 
     relevant = [
-        obj for obj in lines
+        obj
+        for obj in lines
         if obj.get("type") in ("user", "assistant") and not obj.get("isSidechain")
     ]
 
@@ -326,15 +385,19 @@ def build_conversation(lines):
                 tool_map[tool_id] = tool_name
                 # Only add if not already present (by tool id)
                 existing_ids = {
-                    b.get("tool_id") for b in entry["blocks"] if b.get("type") == "tool_use"
+                    b.get("tool_id")
+                    for b in entry["blocks"]
+                    if b.get("type") == "tool_use"
                 }
                 if tool_id not in existing_ids:
-                    entry["blocks"].append({
-                        "type": "tool_use",
-                        "tool_id": tool_id,
-                        "tool_name": tool_name,
-                        "input": block.get("input", {}),
-                    })
+                    entry["blocks"].append(
+                        {
+                            "type": "tool_use",
+                            "tool_id": tool_id,
+                            "tool_name": tool_name,
+                            "input": block.get("input", {}),
+                        }
+                    )
 
     # Pass 2: build ordered conversation
     conversation = []
@@ -349,11 +412,13 @@ def build_conversation(lines):
 
             if isinstance(content, str):
                 if content.strip():
-                    conversation.append({
-                        "role": "user",
-                        "timestamp": ts,
-                        "blocks": [{"type": "text", "text": content}],
-                    })
+                    conversation.append(
+                        {
+                            "role": "user",
+                            "timestamp": ts,
+                            "blocks": [{"type": "text", "text": content}],
+                        }
+                    )
             elif isinstance(content, list):
                 # Check if this is a tool_result response or a user prompt
                 has_tool_result = any(b.get("type") == "tool_result" for b in content)
@@ -363,15 +428,21 @@ def build_conversation(lines):
                     for block in content:
                         if block.get("type") == "tool_result":
                             tool_results.append(_normalize_tool_result(block, tool_map))
-                    if tool_results and conversation and conversation[-1]["role"] == "assistant":
+                    if (
+                        tool_results
+                        and conversation
+                        and conversation[-1]["role"] == "assistant"
+                    ):
                         conversation[-1]["blocks"].extend(tool_results)
                     elif tool_results:
                         # No preceding assistant msg; add standalone
-                        conversation.append({
-                            "role": "tool",
-                            "timestamp": ts,
-                            "blocks": tool_results,
-                        })
+                        conversation.append(
+                            {
+                                "role": "tool",
+                                "timestamp": ts,
+                                "blocks": tool_results,
+                            }
+                        )
                 else:
                     # User prompt with text blocks
                     texts = []
@@ -381,11 +452,15 @@ def build_conversation(lines):
                             if t.strip():
                                 texts.append(t)
                     if texts:
-                        conversation.append({
-                            "role": "user",
-                            "timestamp": ts,
-                            "blocks": [{"type": "text", "text": "\n\n".join(texts)}],
-                        })
+                        conversation.append(
+                            {
+                                "role": "user",
+                                "timestamp": ts,
+                                "blocks": [
+                                    {"type": "text", "text": "\n\n".join(texts)}
+                                ],
+                            }
+                        )
 
         elif obj.get("type") == "assistant":
             msg = obj.get("message", {})
@@ -396,11 +471,13 @@ def build_conversation(lines):
             if msg_id in assistant_msgs:
                 entry = assistant_msgs[msg_id]
                 if entry["blocks"]:
-                    conversation.append({
-                        "role": "assistant",
-                        "timestamp": entry["timestamp"],
-                        "blocks": entry["blocks"],
-                    })
+                    conversation.append(
+                        {
+                            "role": "assistant",
+                            "timestamp": entry["timestamp"],
+                            "blocks": entry["blocks"],
+                        }
+                    )
 
     return conversation
 
@@ -439,10 +516,13 @@ def _normalize_tool_result(block, tool_map):
 # HTML generation
 # ---------------------------------------------------------------------------
 
+
 def generate_html(messages, metadata):
     """Produce a complete standalone HTML string."""
     # Escape </script> in JSON payload
-    json_data = json.dumps({"messages": messages, "metadata": metadata}, ensure_ascii=False)
+    json_data = json.dumps(
+        {"messages": messages, "metadata": metadata}, ensure_ascii=False
+    )
     json_data = json_data.replace("</", "<\\/")
 
     date_str = metadata.get("date", "")
@@ -691,6 +771,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (idx > 0) { var hr = document.createElement('hr'); hr.className = 'msg-divider'; body.appendChild(hr); }
         if (msg.role === 'user') renderUserMessage(body, msg);
         else if (msg.role === 'assistant') renderAssistantMessage(body, msg);
+        else if (msg.role === 'tool') renderToolMessage(body, msg);
     });
 
     var spacer = document.createElement('div');
@@ -718,6 +799,18 @@ function renderAssistantMessage(container, msg) {
             d.innerHTML = renderMarkdown(b.text); section.appendChild(d);
         } else if (b.type === 'thinking') { section.appendChild(renderThinking(b));
         } else if (b.type === 'tool_use') { section.appendChild(renderToolUse(b));
+        } else if (b.type === 'tool_result') { section.appendChild(renderToolResult(b));
+        }
+    });
+    container.appendChild(section);
+}
+
+/* ── Tool Message ── */
+function renderToolMessage(container, msg) {
+    var section = el('div', '', 'padding:1.5rem 0;padding-left:1.25rem;');
+    section.appendChild(labelRow('Tool', 'var(--tool-accent)', msg.timestamp));
+    msg.blocks.forEach(function(b) {
+        if (b.type === 'tool_use') { section.appendChild(renderToolUse(b));
         } else if (b.type === 'tool_result') { section.appendChild(renderToolResult(b));
         }
     });
@@ -911,12 +1004,13 @@ def _truncate(text, width):
     """Truncate text with ellipsis if longer than width."""
     if len(text) <= width:
         return text
-    return text[:max(0, width - 3)] + "..." if width > 3 else text[:width]
+    return text[: max(0, width - 3)] + "..." if width > 3 else text[:width]
 
 
 # ---------------------------------------------------------------------------
 # TUI: Session Browser
 # ---------------------------------------------------------------------------
+
 
 class SessionBrowser:
     """Interactive curses-based session browser."""
@@ -938,7 +1032,7 @@ class SessionBrowser:
         self.status_timeout = 0
         self.collapsed = set()  # collapsed project names
         self.sessions = []
-        self.items = []         # flat list of ListItem
+        self.items = []  # flat list of ListItem
         self._preview_cache = {}
         self._preview_cache_order = []
         self._cache_max = 20
@@ -1044,10 +1138,14 @@ class SessionBrowser:
             # Apply filter
             if self.filter_text:
                 ft = self.filter_text.lower()
-                searchable = " ".join([
-                    pname, s.get("session_id", ""), s.get("first_prompt", ""),
-                    s.get("git_branch", ""),
-                ]).lower()
+                searchable = " ".join(
+                    [
+                        pname,
+                        s.get("session_id", ""),
+                        s.get("first_prompt", ""),
+                        s.get("git_branch", ""),
+                    ]
+                ).lower()
                 if ft not in searchable:
                     continue
             if pname not in by_project:
@@ -1145,7 +1243,9 @@ class SessionBrowser:
                 attr = self._color(4, curses.A_BOLD)
                 if is_selected:
                     attr = self._color(3, curses.A_BOLD)
-                self._safe_addnstr(y, left, text.ljust(usable_w + 1), usable_w + 1, attr)
+                self._safe_addnstr(
+                    y, left, text.ljust(usable_w + 1), usable_w + 1, attr
+                )
             else:
                 s = item.data
                 sid = s["session_id"][:8]
@@ -1165,14 +1265,18 @@ class SessionBrowser:
 
                 if is_selected:
                     attr = self._color(3)
-                    self._safe_addnstr(y, left, text.ljust(usable_w + 1), usable_w + 1, attr)
+                    self._safe_addnstr(
+                        y, left, text.ljust(usable_w + 1), usable_w + 1, attr
+                    )
                 else:
                     # Color parts differently
                     self._safe_addnstr(y, left, " " * (usable_w + 1), usable_w + 1, 0)
                     self._safe_addnstr(y, left, "   ", 3, 0)
                     self._safe_addnstr(y, left + 3, sid, len(sid), self._color(5))
                     self._safe_addnstr(y, left + 3 + len(sid), "  ", 2, 0)
-                    self._safe_addnstr(y, left + 5 + len(sid), date, len(date), self._color(6))
+                    self._safe_addnstr(
+                        y, left + 5 + len(sid), date, len(date), self._color(6)
+                    )
                     self._safe_addnstr(y, left + 5 + len(sid) + len(date), "  ", 2, 0)
                     p_start = left + 7 + len(sid) + len(date)
                     remaining = usable_w + 1 - (p_start - left)
@@ -1192,13 +1296,22 @@ class SessionBrowser:
             elif item.kind == "header":
                 # Find first session under this header
                 for j in range(self.cursor + 1, len(self.items)):
-                    if self.items[j].kind == "session" and self.items[j].project == item.project:
+                    if (
+                        self.items[j].kind == "session"
+                        and self.items[j].project == item.project
+                    ):
                         session = self.items[j].data
                         break
 
         if not session:
             msg = "No session selected"
-            self._safe_addnstr(top + height // 2, left + (width - len(msg)) // 2, msg, len(msg), curses.A_DIM)
+            self._safe_addnstr(
+                top + height // 2,
+                left + (width - len(msg)) // 2,
+                msg,
+                len(msg),
+                curses.A_DIM,
+            )
             return
 
         preview = self._get_preview(session)
@@ -1223,7 +1336,7 @@ class SessionBrowser:
             cwd = preview["cwd"]
             max_cwd = usable_w - 12
             if len(cwd) > max_cwd:
-                cwd = "..." + cwd[-(max_cwd - 3):]
+                cwd = "..." + cwd[-(max_cwd - 3) :]
             lines.append(("label", f"  CWD:      {cwd}"))
 
         lines.append(("text", ""))
@@ -1260,7 +1373,9 @@ class SessionBrowser:
                 self._safe_addnstr(y, left + 1, text, usable_w, curses.A_DIM)
             elif kind == "role":
                 role_color = self._color(8) if "Human" in text else self._color(9)
-                self._safe_addnstr(y, left + 1, text, usable_w, role_color | curses.A_BOLD)
+                self._safe_addnstr(
+                    y, left + 1, text, usable_w, role_color | curses.A_BOLD
+                )
             else:
                 self._safe_addnstr(y, left + 1, text, usable_w, 0)
 
@@ -1297,23 +1412,28 @@ class SessionBrowser:
             else:
                 content = help_lines[i - 1] if i - 1 < len(help_lines) else ""
                 line = "| " + content.ljust(box_w - 4) + " |"
-            self._safe_addnstr(y, start_x, line, min(len(line), w - start_x),
-                             self._color(1, curses.A_BOLD))
+            self._safe_addnstr(
+                y,
+                start_x,
+                line,
+                min(len(line), w - start_x),
+                self._color(1, curses.A_BOLD),
+            )
 
     def _handle_key(self, key):
         """Handle key press in normal mode. Returns 'quit' to exit."""
-        if key in (ord('q'), 27):  # q or Esc
+        if key in (ord("q"), 27):  # q or Esc
             if self.preview_focus:
                 self.preview_focus = False
                 return None
             return "quit"
-        elif key == ord('?'):
+        elif key == ord("?"):
             self.show_help = True
         elif self.preview_focus:
             # In preview focus mode, j/k scroll the preview pane
-            if key in (ord('j'), curses.KEY_DOWN):
+            if key in (ord("j"), curses.KEY_DOWN):
                 self.preview_scroll += 1
-            elif key in (ord('k'), curses.KEY_UP):
+            elif key in (ord("k"), curses.KEY_UP):
                 self.preview_scroll = max(0, self.preview_scroll - 1)
             elif key == curses.KEY_NPAGE:
                 self.preview_scroll += 10
@@ -1322,9 +1442,9 @@ class SessionBrowser:
             elif key == 9:  # Tab
                 self.preview_focus = False
             return None
-        elif key in (ord('j'), curses.KEY_DOWN):
+        elif key in (ord("j"), curses.KEY_DOWN):
             self._move_cursor(1)
-        elif key in (ord('k'), curses.KEY_UP):
+        elif key in (ord("k"), curses.KEY_UP):
             self._move_cursor(-1)
         elif key == curses.KEY_NPAGE:  # PgDn
             h, _ = self.stdscr.getmaxyx()
@@ -1332,22 +1452,22 @@ class SessionBrowser:
         elif key == curses.KEY_PPAGE:  # PgUp
             h, _ = self.stdscr.getmaxyx()
             self._move_cursor(-(h - 4))
-        elif key in (ord('g'), curses.KEY_HOME):
+        elif key in (ord("g"), curses.KEY_HOME):
             self.cursor = 0
             self.scroll_offset = 0
             self.preview_scroll = 0
-        elif key in (ord('G'), curses.KEY_END):
+        elif key in (ord("G"), curses.KEY_END):
             self.cursor = max(0, len(self.items) - 1)
             self.preview_scroll = 0
         elif key == 9:  # Tab
             self.preview_focus = not self.preview_focus
-        elif key in (ord('h'), curses.KEY_LEFT):
+        elif key in (ord("h"), curses.KEY_LEFT):
             self._collapse_current()
-        elif key in (ord('l'), curses.KEY_RIGHT):
+        elif key in (ord("l"), curses.KEY_RIGHT):
             self._expand_current()
         elif key in (10, curses.KEY_ENTER):  # Enter
             self._action_enter()
-        elif key == ord('/'):
+        elif key == ord("/"):
             self.filter_mode = True
             self.filter_text = ""
         return None
@@ -1421,27 +1541,13 @@ class SessionBrowser:
             return
 
         try:
-            lines = parse_jsonl(path)
-            metadata = extract_metadata(lines)
-            messages = build_conversation(lines)
-
-            if not messages:
-                self.status_message = "No messages found in session"
-                self.status_timeout = 30
-                return
-
-            html = generate_html(messages, metadata)
-            sid = metadata.get("session_id", "session")[:12]
-            output_path = f"claude-session-{sid}.html"
-
-            with open(output_path, "w") as f:
-                f.write(html)
-
-            self.status_message = f"Exported {len(messages)} messages to {output_path}"
+            output_path, message_count, _ = export_session(path)
+            self.status_message = f"Exported {message_count} messages to {output_path}"
             self.status_timeout = 50
         except Exception as e:
             self.status_message = f"Export error: {e}"
             self.status_timeout = 50
+            _debug("export failed", e)
 
     def _get_preview(self, session):
         """Get preview data for a session, using LRU cache."""
@@ -1451,8 +1557,14 @@ class SessionBrowser:
 
         path = session.get("path", "")
         if not path or not os.path.exists(path):
-            return {"session_id": sid, "model": "", "date": "", "git_branch": "",
-                    "cwd": "", "messages": []}
+            return {
+                "session_id": sid,
+                "model": "",
+                "date": "",
+                "git_branch": "",
+                "cwd": "",
+                "messages": [],
+            }
 
         preview = _read_preview(path)
 
@@ -1509,9 +1621,29 @@ class SessionBrowser:
         return lines
 
 
+def export_session(path, output_path=None):
+    lines = parse_jsonl(path)
+    metadata = extract_metadata(lines)
+    messages = build_conversation(lines)
+
+    if not messages:
+        raise ValueError("No messages found in session")
+
+    html = generate_html(messages, metadata)
+    if not output_path:
+        sid = metadata.get("session_id", "session")[:12]
+        output_path = f"claude-session-{sid}.html"
+
+    with open(output_path, "w") as f:
+        f.write(html)
+
+    return output_path, len(messages), metadata
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def cmd_list(args):
     """List available sessions."""
@@ -1542,30 +1674,18 @@ def cmd_list(args):
 def cmd_export(args):
     """Export a session to HTML."""
     path = resolve_session(args.session)
-    lines = parse_jsonl(path)
-    metadata = extract_metadata(lines)
-    messages = build_conversation(lines)
-
-    if not messages:
-        print("No messages found in session.", file=sys.stderr)
+    try:
+        output_path, message_count, _ = export_session(path, args.output)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         sys.exit(1)
 
-    html = generate_html(messages, metadata)
-
-    if args.output:
-        output_path = args.output
-    else:
-        sid = metadata.get("session_id", "session")[:12]
-        output_path = f"claude-session-{sid}.html"
-
-    with open(output_path, "w") as f:
-        f.write(html)
-
-    print(f"Exported {len(messages)} messages to {output_path}")
+    print(f"Exported {message_count} messages to {output_path}")
 
 
 def cmd_browse(args):
     """Launch interactive TUI session browser."""
+
     def _run(stdscr):
         browser = SessionBrowser(stdscr, project_filter=args.project)
         browser.run()
@@ -1577,18 +1697,26 @@ def cmd_browse(args):
 
 
 def main():
+    global VERBOSE
     parser = argparse.ArgumentParser(
         description="Export Claude Code sessions to standalone HTML files."
     )
 
     parser.add_argument("--list", action="store_true", help="List available sessions")
-    parser.add_argument("--browse", action="store_true",
-                        help="Launch interactive TUI session browser")
+    parser.add_argument(
+        "--browse", action="store_true", help="Launch interactive TUI session browser"
+    )
     parser.add_argument("-p", "--project", help="Filter projects by name substring")
-    parser.add_argument("session", nargs="?", help="Session UUID or path to .jsonl file")
+    parser.add_argument(
+        "session", nargs="?", help="Session UUID or path to .jsonl file"
+    )
     parser.add_argument("-o", "--output", help="Output HTML file path")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Show debug/trace info"
+    )
 
     args = parser.parse_args()
+    VERBOSE = args.verbose
 
     if args.list:
         cmd_list(args)
