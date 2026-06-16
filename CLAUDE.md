@@ -25,7 +25,17 @@ assets/HTML generation → `SessionBrowser` (curses TUI) → `cmd_*` handlers �
 - `build_conversation` skips sidechain messages.
 - Exported `*.html` files are gitignored build artifacts.
 - macOS-oriented: uses native system fonts (SF, New York, SF Mono) in output.
+- marked v5+ removed the inline `highlight` option; highlighting runs as a
+  post-render `hljs.highlightElement` pass over `pre code`. The hljs theme must
+  be **dark** (github-dark) to match the `#282c34` code background, and
+  `.prose pre` sets a base color so hljs token spans win on CSS specificity.
 
 ## Tests
 `tests/test_claude_export.py` appends the repo root to `sys.path` and imports
 `claude_export` directly. Run with `unittest discover -s tests`.
+
+## Verifying / upgrading exports
+- Verify self-containment: render `file:///path/export.html` (offline by
+  definition) and `grep -coE '(src|href)="https?://'` should be 0.
+- Re-vendor `assets/` from cdnjs (highlight.js 11.9.0 `highlight.min.js` +
+  `styles/github-dark.min.css`) and jsdelivr (`marked@12/marked.min.js`).
