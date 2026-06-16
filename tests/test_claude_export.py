@@ -531,5 +531,28 @@ class TestFindSessions(unittest.TestCase):
         self.assertEqual(sessions[0]["project"], "Project-One")
 
 
+class TestProjectGroupOrdering(unittest.TestCase):
+    def test_build_items_orders_groups_by_recent_activity(self):
+        # alpha's most recent activity is 05; beta falls back to created (06,
+        # newest); gamma is oldest at 01. Expect newest-first: beta, alpha, gamma.
+        sessions = [
+            {"project_path": "/Users/me/alpha", "modified": "2026-02-01T00:00:00Z"},
+            {"project_path": "/Users/me/alpha", "modified": "2026-05-01T00:00:00Z"},
+            {"project_path": "/Users/me/beta", "modified": "",
+             "created": "2026-06-01T00:00:00Z"},
+            {"project_path": "/Users/me/gamma", "modified": "2026-01-01T00:00:00Z"},
+        ]
+
+        browser = claude_export.SessionBrowser.__new__(claude_export.SessionBrowser)
+        browser.sessions = sessions
+        browser.filter_text = ""
+        browser.collapsed = set()
+        browser.cursor = 0
+        browser._build_items()
+
+        headers = [i.data for i in browser.items if i.kind == "header"]
+        self.assertEqual(headers, ["me/beta", "me/alpha", "me/gamma"])
+
+
 if __name__ == "__main__":
     unittest.main()

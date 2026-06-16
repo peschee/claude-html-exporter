@@ -1000,6 +1000,14 @@ def _display_project_name(session):
     return meaningful[-1] if meaningful else pp
 
 
+def _session_activity(session):
+    """Last-activity timestamp for ordering: modified, falling back to created.
+
+    Timestamps are ISO 8601 strings, so lexical comparison matches chronological
+    order. Returns "" when neither is present (sorts oldest)."""
+    return session.get("modified") or session.get("created") or ""
+
+
 def _truncate(text, width):
     """Truncate text with ellipsis if longer than width."""
     if len(text) <= width:
@@ -1125,8 +1133,8 @@ class SessionBrowser:
     def _load_sessions(self):
         """Load sessions using existing find_sessions."""
         self.sessions = find_sessions(project_filter=self.project_filter)
-        # Sort by created date descending within each project
-        self.sessions.sort(key=lambda s: s.get("created", ""), reverse=True)
+        # Sort by last activity descending so newest sessions lead each group
+        self.sessions.sort(key=_session_activity, reverse=True)
 
     def _build_items(self):
         """Build flat list of ListItem from sessions, applying filter and collapse."""
@@ -1152,6 +1160,12 @@ class SessionBrowser:
                 by_project[pname] = []
                 order.append(pname)
             by_project[pname].append(s)
+
+        # Order project groups by their most recent activity, newest first.
+        order.sort(
+            key=lambda p: max(_session_activity(s) for s in by_project[p]),
+            reverse=True,
+        )
 
         self.items = []
         for pname in order:
