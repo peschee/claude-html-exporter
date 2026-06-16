@@ -516,6 +516,62 @@ def _normalize_tool_result(block, tool_map):
 # HTML generation
 # ---------------------------------------------------------------------------
 
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+# Vendored assets are inlined into the export so the HTML is fully
+# self-contained (works offline, no network, no on-disk references). Each
+# entry maps a vendored filename to the CDN URL used as a fallback when the
+# local copy is missing.
+_JS_ASSETS = [
+    ("marked.min.js", "https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"),
+    (
+        "highlight.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js",
+    ),
+]
+_CSS_ASSETS = [
+    (
+        "highlight-github-dark.css",
+        "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css",
+    ),
+]
+
+
+def _read_asset(name):
+    """Return the contents of a vendored asset, or None if unavailable."""
+    try:
+        return (ASSETS_DIR / name).read_text(encoding="utf-8")
+    except OSError as exc:
+        _debug(f"asset {name} not found, will fall back to CDN", exc)
+        return None
+
+
+def _build_head_assets():
+    """Build the <head> block: inline vendored assets, else fall back to CDN.
+
+    Inlining keeps each export self-contained; the CDN fallback ensures the
+    export still renders if a vendored file is missing at generation time.
+    """
+    parts = []
+
+    for name, cdn_url in _CSS_ASSETS:
+        css = _read_asset(name)
+        if css is not None:
+            parts.append("<style>\n" + css + "\n</style>")
+        else:
+            parts.append(f'<link rel="stylesheet" href="{cdn_url}">')
+
+    for name, cdn_url in _JS_ASSETS:
+        js = _read_asset(name)
+        if js is not None:
+            # Defensively neutralize any </script> that could close the tag early.
+            js = js.replace("</script", "<\\/script")
+            parts.append("<script>\n" + js + "\n</script>")
+        else:
+            parts.append(f'<script src="{cdn_url}"></script>')
+
+    return "\n".join(parts)
+
 
 def generate_html(messages, metadata):
     """Produce a complete standalone HTML string."""
@@ -537,7 +593,13 @@ def generate_html(messages, metadata):
 
     title = f"Claude Code Session — {date_display}"
 
-    return HTML_TEMPLATE.replace("{{JSON_DATA}}", json_data).replace("{{TITLE}}", title)
+    # Inject template-controlled placeholders first, then the user-controlled
+    # JSON payload last so conversation text can't collide with a placeholder.
+    return (
+        HTML_TEMPLATE.replace("{{HEAD_ASSETS}}", _build_head_assets())
+        .replace("{{TITLE}}", title)
+        .replace("{{JSON_DATA}}", json_data)
+    )
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -546,14 +608,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{TITLE}}</title>
-<script src="https://cdn.tailwindcss.com/4"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+{{HEAD_ASSETS}}
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&display=swap');
-
 :root {
+    /* Native macOS font stacks — no web fonts, render instantly offline.
+       Sans → San Francisco, Serif → New York, Mono → SF Mono / Menlo. */
+    --font-sans: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+    --font-serif: ui-serif, "New York", "Iowan Old Style", Palatino, Georgia, serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace;
     --user-accent: #D4613E;
     --user-bg: #FBF4F1;
     --user-label: #B8462A;
@@ -581,15 +643,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 * { box-sizing: border-box; }
 
 body {
-    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-family: var(--font-sans);
     background: var(--page-bg);
     color: var(--text-primary);
     margin: 0;
     -webkit-font-smoothing: antialiased;
 }
 
+/* ── Layout (replaces the few Tailwind utilities previously used) ── */
+.wrap { max-width: 52rem; margin: 0 auto; }
+.header-inner { padding: 1.5rem 2rem; }
+.conversation-body { padding: 1rem 1.5rem; }
+
 /* ── Prose (markdown content) ── */
-.prose { font-family: 'IBM Plex Serif', Georgia, serif; line-height: 1.75; font-size: 0.938rem; }
+.prose { font-family: var(--font-serif); line-height: 1.75; font-size: 0.938rem; }
 .prose p { margin: 0.6em 0; }
 .prose p:first-child { margin-top: 0; }
 .prose p:last-child { margin-bottom: 0; }
@@ -599,7 +666,7 @@ body {
 .prose li { margin: 0.2em 0; }
 .prose li > p { margin: 0.2em 0; }
 .prose h1, .prose h2, .prose h3, .prose h4 {
-    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-family: var(--font-sans);
     font-weight: 600; margin: 1.2em 0 0.4em; line-height: 1.3;
 }
 .prose h1 { font-size: 1.4em; }
@@ -608,12 +675,13 @@ body {
 .prose pre {
     margin: 0.75em 0; border-radius: 6px; overflow-x: auto;
     background: #282c34; padding: 1em; border: 1px solid #1a1e24;
+    color: #c9d1d9; /* base text for unhighlighted code; hljs token spans override */
 }
 .prose pre > code {
-    background: none; padding: 0; color: #abb2bf;
-    font-family: 'IBM Plex Mono', monospace; font-size: 0.85em;
+    background: none; padding: 0;
+    font-family: var(--font-mono); font-size: 0.85em;
 }
-.prose code { font-family: 'IBM Plex Mono', monospace; font-size: 0.88em; }
+.prose code { font-family: var(--font-mono); font-size: 0.88em; }
 .prose :not(pre) > code {
     background: rgba(0,0,0,0.06); padding: 0.15em 0.4em; border-radius: 3px;
 }
@@ -621,7 +689,7 @@ body {
     border-left: 3px solid var(--divider); padding-left: 1em; margin: 0.75em 0;
     color: var(--text-secondary); font-style: italic;
 }
-.prose table { border-collapse: collapse; margin: 0.75em 0; width: 100%; font-family: 'IBM Plex Sans', sans-serif; font-size: 0.9em; }
+.prose table { border-collapse: collapse; margin: 0.75em 0; width: 100%; font-family: var(--font-sans); font-size: 0.9em; }
 .prose th, .prose td { border: 1px solid var(--divider); padding: 0.5em 0.75em; text-align: left; }
 .prose th { background: #f5f4f1; font-weight: 600; }
 .prose a { color: #3A7CA5; text-decoration: underline; text-underline-offset: 2px; }
@@ -630,7 +698,7 @@ body {
 
 /* ── Thinking prose ── */
 .thinking-prose {
-    font-family: 'IBM Plex Serif', Georgia, serif;
+    font-family: var(--font-serif);
     font-style: italic; font-size: 0.875rem; line-height: 1.65;
     color: #6B6280;
 }
@@ -646,24 +714,24 @@ body {
 
 /* ── Labels ── */
 .role-label {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.6875rem; font-weight: 600;
     letter-spacing: 0.08em; text-transform: uppercase;
 }
 .block-label {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.6875rem; font-weight: 500;
     letter-spacing: 0.05em; text-transform: uppercase;
 }
 
 /* ── Tool formatting ── */
 .tool-input {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8rem; line-height: 1.5;
     white-space: pre-wrap; word-break: break-word;
 }
 .tool-output {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.78rem; line-height: 1.5;
     white-space: pre-wrap; word-break: break-word;
     color: var(--text-primary);
@@ -676,12 +744,12 @@ body {
     padding: 1.5rem max(1.5rem, env(safe-area-inset-left));
 }
 .session-header .meta-label {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.625rem; letter-spacing: 0.1em;
     text-transform: uppercase; color: #8A8884;
 }
 .session-header .meta-value {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8125rem; color: #E0DFDB;
     min-width: 0;
     overflow: hidden;
@@ -717,17 +785,10 @@ document.addEventListener('DOMContentLoaded', function() {
     var messages = data.messages;
     var metadata = data.metadata;
 
-    marked.setOptions({
-        highlight: function(code, lang) {
-            if (lang && hljs.getLanguage(lang)) {
-                try { return hljs.highlight(code, {language: lang}).value; } catch(e) {}
-            }
-            try { return hljs.highlightAuto(code).value; } catch(e) {}
-            return code;
-        },
-        breaks: false,
-        gfm: true,
-    });
+    // marked v5+ removed the inline `highlight` option; highlighting now runs
+    // as a post-render pass over the emitted <pre><code> blocks (see below).
+    var hasHljs = typeof hljs !== 'undefined';
+    marked.setOptions({ breaks: false, gfm: true });
 
     var app = document.getElementById('app');
 
@@ -735,10 +796,10 @@ document.addEventListener('DOMContentLoaded', function() {
     var header = document.createElement('div');
     header.className = 'session-header';
     var headerInner = document.createElement('div');
-    headerInner.className = 'max-w-[52rem] mx-auto px-8 py-6';
+    headerInner.className = 'wrap header-inner';
 
     var title = document.createElement('div');
-    title.style.cssText = 'font-family:"IBM Plex Sans",sans-serif;font-size:1.125rem;font-weight:600;margin-bottom:1rem;';
+    title.style.cssText = 'font-family:var(--font-sans);font-size:1.125rem;font-weight:600;margin-bottom:1rem;';
     title.textContent = 'Claude Code Session';
     headerInner.appendChild(title);
 
@@ -764,7 +825,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /* ── Conversation body ── */
     var body = document.createElement('div');
-    body.className = 'max-w-[52rem] mx-auto px-6 py-4';
+    body.className = 'wrap conversation-body';
     app.appendChild(body);
 
     messages.forEach(function(msg, idx) {
@@ -777,6 +838,13 @@ document.addEventListener('DOMContentLoaded', function() {
     var spacer = document.createElement('div');
     spacer.style.height = '4rem';
     body.appendChild(spacer);
+
+    /* ── Syntax highlighting (post-render pass over emitted code blocks) ── */
+    if (hasHljs) {
+        document.querySelectorAll('pre code').forEach(function(block) {
+            try { hljs.highlightElement(block); } catch (e) {}
+        });
+    }
 });
 
 /* ── User Message ── */
@@ -842,7 +910,7 @@ function renderToolUse(block) {
     var w = el('div', '', 'margin:0.75rem 0;background:var(--tool-bg);border:1px solid var(--tool-border);border-left:4px solid var(--tool-accent);border-radius:0 6px 6px 0;overflow:hidden;');
 
     var hdr = el('div', '', 'padding:0.5rem 0.875rem;display:flex;align-items:center;gap:0.5rem;border-bottom:1px solid var(--tool-border);');
-    var icon = el('span', '', 'display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;background:var(--tool-accent);color:white;border-radius:3px;font-size:0.65rem;font-weight:700;font-family:"IBM Plex Mono",monospace;');
+    var icon = el('span', '', 'display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;background:var(--tool-accent);color:white;border-radius:3px;font-size:0.65rem;font-weight:700;font-family:var(--font-mono);');
     icon.textContent = toolIcon(block.tool_name);
     hdr.appendChild(icon);
     var tl = el('span'); tl.className = 'block-label'; tl.style.color = 'var(--tool-accent)'; tl.textContent = block.tool_name || 'Tool';
@@ -901,7 +969,7 @@ function labelRow(name, color, timestamp) {
     var lbl = el('span'); lbl.className = 'role-label'; lbl.style.color = color; lbl.textContent = name;
     row.appendChild(lbl);
     if (timestamp) {
-        var ts = el('span', '', 'font-family:"IBM Plex Mono",monospace;font-size:0.6875rem;color:var(--text-tertiary);');
+        var ts = el('span', '', 'font-family:var(--font-mono);font-size:0.6875rem;color:var(--text-tertiary);');
         ts.textContent = formatTime(timestamp); row.appendChild(ts);
     }
     return row;
