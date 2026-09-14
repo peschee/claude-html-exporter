@@ -971,3 +971,62 @@ class TestTitleEscaping(unittest.TestCase):
         )
         self.assertNotIn("</title><script>", html_out)
         self.assertIn("&lt;/title&gt;&lt;script&gt;", html_out)
+
+
+class TestImages(unittest.TestCase):
+    def _img(self, data="aGVsbG8=", media_type="image/png"):
+        return {
+            "type": "image",
+            "source": {"type": "base64", "data": data, "media_type": media_type},
+        }
+
+    def test_normalize_tool_result_collects_images(self):
+        block = {
+            "tool_use_id": "t1",
+            "content": [{"type": "text", "text": "shot"}, self._img()],
+        }
+        result = claude_export._normalize_tool_result(block, {"t1": "Read"})
+        self.assertEqual(result["text"], "shot")
+        self.assertEqual(
+            result["images"], [{"media_type": "image/png", "data": "aGVsbG8="}]
+        )
+
+    def test_normalize_tool_result_oversize_image_becomes_placeholder(self):
+        big = "A" * (claude_export.IMAGE_LIMIT + 1)
+        block = {"tool_use_id": "t1", "content": [self._img(data=big)]}
+        result = claude_export._normalize_tool_result(block, {})
+        self.assertEqual(result["images"], [])
+        self.assertTrue(result["text"].startswith("[image omitted, "))
+
+    def test_normalize_tool_result_non_base64_image_is_placeholder(self):
+        block = {
+            "tool_use_id": "t1",
+            "content": [{"type": "image", "source": {"type": "url", "url": "x"}}],
+        }
+        result = claude_export._normalize_tool_result(block, {})
+        self.assertEqual(result["images"], [])
+        self.assertEqual(result["text"], "[image]")
+
+    def test_build_conversation_user_message_with_image(self):
+        lines = [
+            {
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "message": {
+                    "content": [{"type": "text", "text": "look"}, self._img()]
+                },
+            },
+            {
+                "type": "user",
+                "timestamp": "2024-01-01T00:00:01Z",
+                "message": {"content": [self._img(media_type="image/jpeg")]},
+            },
+        ]
+        conv = claude_export.build_conversation(lines)
+        self.assertEqual(len(conv), 2)
+        self.assertEqual(
+            [b["type"] for b in conv[0]["blocks"]], ["text", "image"]
+        )
+        self.assertEqual(conv[0]["blocks"][1]["media_type"], "image/png")
+        self.assertEqual(conv[1]["blocks"][0]["type"], "image")
+        self.assertEqual(conv[1]["blocks"][0]["media_type"], "image/jpeg")

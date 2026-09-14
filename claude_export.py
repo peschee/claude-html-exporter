@@ -29,6 +29,8 @@ from pathlib import Path
 
 CLAUDE_DIR = Path.home() / ".claude" / "projects"
 TRUNCATE_LIMIT = 50_000
+# Base64 images above this are replaced by a placeholder so exports stay openable.
+IMAGE_LIMIT = 5 * 1024 * 1024
 VERBOSE = False
 
 
@@ -607,21 +609,31 @@ def build_conversation(lines):
                             }
                         )
                 else:
-                    # User prompt with text blocks
+                    # User prompt with text blocks, possibly pasted images
                     texts = []
+                    blocks = []
                     for block in content:
-                        if block.get("type") == "text":
+                        btype = block.get("type")
+                        if btype == "text":
                             t = block.get("text", "")
                             if t.strip():
                                 texts.append(t)
+                        elif btype == "image":
+                            img, placeholder = _normalize_image(block)
+                            if img:
+                                blocks.append({"type": "image", **img})
+                            else:
+                                texts.append(placeholder)
                     if texts:
+                        blocks.insert(
+                            0, {"type": "text", "text": "\n\n".join(texts)}
+                        )
+                    if blocks:
                         conversation.append(
                             {
                                 "role": "user",
                                 "timestamp": ts,
-                                "blocks": [
-                                    {"type": "text", "text": "\n\n".join(texts)}
-                                ],
+                                "blocks": blocks,
                             }
                         )
 
@@ -656,11 +668,19 @@ def _normalize_tool_result(block, tool_map):
     is_error = block.get("is_error", False)
     content = block.get("content", "")
 
+    images = []
     if isinstance(content, list):
         parts = []
         for item in content:
-            if item.get("type") == "text":
+            itype = item.get("type")
+            if itype == "text":
                 parts.append(item.get("text", ""))
+            elif itype == "image":
+                img, placeholder = _normalize_image(item)
+                if img:
+                    images.append(img)
+                else:
+                    parts.append(placeholder)
         text = "\n".join(parts)
     elif isinstance(content, str):
         text = content
@@ -676,7 +696,27 @@ def _normalize_tool_result(block, tool_map):
         "tool_name": tool_name,
         "is_error": is_error,
         "text": text,
+        "images": images,
     }
+
+
+def _normalize_image(block):
+    """Turn an Anthropic image content block into an embeddable dict.
+
+    Returns (image, placeholder): exactly one is set. `image` is
+    {media_type, data} for an inline base64 image within the size cap;
+    otherwise `placeholder` is a short text stand-in.
+    """
+    source = block.get("source") or {}
+    media_type = source.get("media_type", "")
+    data = source.get("data", "")
+    if source.get("type") != "base64" or not media_type.startswith("image/"):
+        return None, "[image]"
+    if not isinstance(data, str) or not data:
+        return None, "[image]"
+    if len(data) > IMAGE_LIMIT:
+        return None, f"[image omitted, {len(data) * 3 // 4 // 1024} KB]"
+    return {"media_type": media_type, "data": data}, None
 
 
 # ---------------------------------------------------------------------------
@@ -1036,6 +1076,7 @@ function renderUserMessage(container, msg) {
     section.appendChild(labelRow('Human', 'var(--user-label)', msg.timestamp));
     msg.blocks.forEach(function(b) {
         if (b.type === 'text') { var d = el('div'); d.className = 'prose'; d.innerHTML = renderMarkdown(b.text); section.appendChild(d); }
+        else if (b.type === 'image') { section.appendChild(imageEl(b, 'margin:0.75rem 0 0;')); }
     });
     container.appendChild(section);
 }
@@ -1160,17 +1201,33 @@ function renderToolResult(block) {
     var dot = el('span', '', 'width:0.4rem;height:0.4rem;border-radius:50%;background:'+ac+';flex-shrink:0;');
     summary.appendChild(dot);
     var rl = el('span'); rl.className = 'block-label'; rl.style.color = ac;
-    rl.textContent = (err ? 'Error' : 'Output') + (block.tool_name ? ' \u2014 ' + block.tool_name : '');
+    var images = block.images || [];
+    rl.textContent = (err ? 'Error' : 'Output') + (block.tool_name ? ' \u2014 ' + block.tool_name : '')
+        + (images.length ? ' \u00b7 ' + images.length + (images.length === 1 ? ' image' : ' images') : '');
     summary.appendChild(rl);
     details.appendChild(summary);
 
-    var txt = block.text || '(empty)';
-    if (txt && txt !== '(empty)') {
+    var txt = block.text || '';
+    if (txt || images.length) {
         var bd = el('div', 'tool-scroll', 'padding:0 0.875rem 0.5rem;border-top:1px solid '+br+';');
-        var pre = el('pre', 'tool-output', 'margin:0;padding-top:0.5rem;');
-        pre.textContent = txt; bd.appendChild(pre); details.appendChild(bd);
+        if (txt) {
+            var pre = el('pre', 'tool-output', 'margin:0;padding-top:0.5rem;');
+            pre.textContent = txt; bd.appendChild(pre);
+        }
+        images.forEach(function(img) { bd.appendChild(imageEl(img, 'margin:0.5rem 0 0;')); });
+        details.appendChild(bd);
     }
     return details;
+}
+
+/* ── Inline image (base64 data URI, built via DOM so data never hits innerHTML) ── */
+function imageEl(img, extraStyle) {
+    var e = document.createElement('img');
+    e.src = 'data:' + img.media_type + ';base64,' + img.data;
+    e.alt = 'image';
+    e.loading = 'lazy';
+    e.style.cssText = 'display:block;max-width:100%;height:auto;border:1px solid var(--divider);border-radius:6px;' + (extraStyle || '');
+    return e;
 }
 
 /* ── Helpers ── */
