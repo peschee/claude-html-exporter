@@ -1058,6 +1058,26 @@ details.sub .tool-input { margin-top: 0.25rem; }
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+/* Paths and branches wrap instead of ellipsizing; short ids stay on one line. */
+.session-header .meta-value.meta-wrap {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+}
+
+/* ── Slash-command turns ── */
+.cmd-pill {
+    display: inline-block;
+    font-family: var(--font-mono); font-size: 0.8rem;
+    padding: 0.2rem 0.6rem; border-radius: 999px;
+    border: 1px solid var(--user-accent); background: var(--user-bg);
+    color: var(--user-label);
+    overflow-wrap: anywhere;
+}
+.cmd-note {
+    font-family: var(--font-mono); font-size: 0.75rem;
+    color: var(--text-tertiary);
+}
 
 /* ── Collapsible blocks ── */
 details.collapsible summary { cursor: pointer; user-select: none; list-style: none; }
@@ -1217,6 +1237,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (pair[0] === 'Date' && pair[1].indexOf('\u2192') !== -1) item.style.gridColumn = 'span 2';
         var lbl = document.createElement('div'); lbl.className = 'meta-label'; lbl.textContent = pair[0];
         var val = document.createElement('div'); val.className = 'meta-value'; val.textContent = pair[1];
+        if (pair[0] === 'Directory' || pair[0] === 'Branch' || pair[0] === 'Date') val.classList.add('meta-wrap');
         val.title = pair[1];
         item.appendChild(lbl); item.appendChild(val); metaGrid.appendChild(item);
     });
@@ -1270,11 +1291,66 @@ function renderUserMessage(container, msg) {
     var section = el('div', '', 'padding:1.5rem 0;border-left:4px solid var(--user-accent);padding-left:1.25rem;');
     section.appendChild(labelRow('Human', 'var(--user-label)', msg.timestamp));
     msg.blocks.forEach(function(b) {
-        if (b.type === 'text') { var d = el('div'); d.className = 'prose'; d.innerHTML = renderMarkdown(b.text); section.appendChild(d); }
+        if (b.type === 'text') {
+            var parsed = parseUserText(b.text);
+            if (parsed.kind === 'command') section.appendChild(renderCommandBadge(parsed));
+            else if (parsed.kind === 'caveat') {
+                var note = el('div', 'cmd-note'); note.textContent = 'Local command output follows';
+                section.appendChild(note);
+            } else if (parsed.text) {
+                var d = el('div'); d.className = 'prose'; d.innerHTML = renderMarkdown(parsed.text); section.appendChild(d);
+            }
+        }
         else if (b.type === 'image') { section.appendChild(imageEl(b, 'margin:0.75rem 0 0;')); }
     });
     container.appendChild(section);
     return section;
+}
+
+/* Claude Code wraps slash commands and local-command output in pseudo-tags.
+   Classify a user turn so the body and the sidebar agree on what it is. */
+function parseUserText(text) {
+    var t = text || '';
+    var stdout = '';
+    t = t.replace(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/g, function(_, out) {
+        stdout += (stdout ? '\n' : '') + out.trim(); return ' ';
+    });
+    var hadCaveat = /<local-command-caveat>[\s\S]*?<\/local-command-caveat>/.test(t);
+    t = t.replace(/<(local-command-caveat|system-reminder)>[\s\S]*?<\/\1>/g, ' ');
+    var cmd = /<command-name>([\s\S]*?)<\/command-name>/.exec(t);
+    if (cmd) {
+        var args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t);
+        var name = cmd[1].trim();
+        if (name && name.charAt(0) !== '/') name = '/' + name;
+        return { kind: 'command', name: name, args: args ? args[1].trim() : '', stdout: stdout, text: '' };
+    }
+    t = t.replace(/<command-message>[\s\S]*?<\/command-message>/g, ' ').trim();
+    if (!t && hadCaveat) return { kind: 'caveat', name: '', args: '', stdout: stdout, text: '' };
+    return { kind: 'text', name: '', args: '', stdout: stdout, text: t };
+}
+
+function renderCommandBadge(parsed) {
+    var w = el('div', '', 'margin:0.25rem 0 0;');
+    var pill = el('span', 'cmd-pill');
+    pill.textContent = parsed.name + (parsed.args ? ' ' + parsed.args : '');
+    w.appendChild(pill);
+    if (parsed.stdout) {
+        var details = document.createElement('details');
+        details.className = 'collapsible';
+        details.style.cssText = 'margin:0.5rem 0 0;background:var(--result-bg);border:1px solid var(--result-border);border-left:4px solid var(--result-accent);border-radius:0 6px 6px 0;overflow:hidden;';
+        var summary = document.createElement('summary');
+        summary.style.cssText = 'padding:0.375rem 0.875rem;display:flex;align-items:center;gap:0.5rem;';
+        var chevron = el('span', 'chevron'); chevron.textContent = '\u25b6';
+        summary.appendChild(chevron);
+        var lbl = el('span'); lbl.className = 'block-label'; lbl.style.color = 'var(--result-accent)'; lbl.textContent = 'Output';
+        summary.appendChild(lbl);
+        details.appendChild(summary);
+        var bd = el('div', 'tool-scroll', 'padding:0 0.875rem 0.5rem;border-top:1px solid var(--result-border);');
+        var pre = el('pre', 'tool-output', 'margin:0;padding-top:0.5rem;');
+        pre.textContent = parsed.stdout; bd.appendChild(pre); details.appendChild(bd);
+        w.appendChild(details);
+    }
+    return w;
 }
 
 /* ── Assistant Message ── */
@@ -1484,15 +1560,11 @@ function imageEl(img, extraStyle) {
 
 /* ── Navigation sidebar ── */
 function navLabel(text) {
-    var t = text || '';
-    /* Slash-command and caveat wrappers Claude Code adds around prompts */
-    var stripped = t.replace(/<(local-command-caveat|local-command-stdout|system-reminder)>[\s\S]*?<\/\1>/g, ' ');
-    if (stripped.trim()) t = stripped;
-    var cmd = /<command-name>([\s\S]*?)<\/command-name>/.exec(t);
-    if (cmd) {
-        var args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t);
-        t = cmd[1].trim() + (args && args[1].trim() ? ' ' + args[1].trim() : '');
-    }
+    var parsed = parseUserText(text);
+    if (parsed.kind === 'command') return parsed.name + (parsed.args ? ' ' + parsed.args : '');
+    if (parsed.kind === 'caveat') return 'Local command output';
+    var t = parsed.text;
+    if (!t.trim()) t = text || '';
     t = t.replace(/<\/?[a-z][a-z0-9-]*>/g, ' ');
     t = t.split('\n').map(function(l) { return l.trim(); }).filter(Boolean).join(' ');
     t = t.replace(/```[\s\S]*?```/g, ' ');
