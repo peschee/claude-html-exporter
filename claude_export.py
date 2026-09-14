@@ -850,6 +850,78 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --text-primary: #2D2D2D;
     --text-secondary: #6B6966;
     --text-tertiary: #9C9891;
+    --surface: #FFFFFF;
+    --inline-code-bg: rgba(0,0,0,0.06);
+    --table-head-bg: #F5F4F1;
+    --link: #3A7CA5;
+    --thinking-text: #6B6280;
+    --scroll-thumb: #CCCCCC;
+    --scroll-thumb-hover: #AAAAAA;
+    --diff-old-bg: #FBEAEA;
+    --diff-old-text: #8A1F1F;
+    --diff-old-border: #EFD3D3;
+    --diff-new-bg: #E9F4EB;
+    --diff-new-text: #1F5F2A;
+    --header-bg: #2D2D2D;
+    --header-text: #F0EFEC;
+    --header-label: #8A8884;
+    --header-value: #E0DFDB;
+    --hover-tint: rgba(0,0,0,0.04);
+    --shadow: rgba(0,0,0,0.12);
+    --shadow-strong: rgba(0,0,0,0.15);
+    --backdrop: rgba(0,0,0,0.25);
+    color-scheme: light;
+}
+
+/* Dark palette: same tokens, tinted so block types stay distinguishable. */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --user-accent: #E07A57;
+        --user-bg: #2B2320;
+        --user-label: #E88A68;
+        --assistant-accent: #A9ACC9;
+        --assistant-bg: #1E1F22;
+        --compact-accent: #C9A64E;
+        --compact-bg: #2A2619;
+        --thinking-accent: #A89CE0;
+        --thinking-bg: #242231;
+        --thinking-border: #3A3650;
+        --tool-accent: #6FA8D6;
+        --tool-bg: #1F262E;
+        --tool-border: #33414F;
+        --result-accent: #7FB58A;
+        --result-bg: #1F2A22;
+        --result-border: #334A38;
+        --error-accent: #D9676C;
+        --error-bg: #2E2021;
+        --error-border: #553436;
+        --page-bg: #1E1F22;
+        --divider: #33353A;
+        --text-primary: #E6E4DF;
+        --text-secondary: #A3A09A;
+        --text-tertiary: #767370;
+        --surface: #26272B;
+        --inline-code-bg: rgba(255,255,255,0.08);
+        --table-head-bg: #2A2B30;
+        --link: #7CB4E0;
+        --thinking-text: #B4ABD6;
+        --scroll-thumb: #4A4C52;
+        --scroll-thumb-hover: #5E6068;
+        --diff-old-bg: #3A2224;
+        --diff-old-text: #F0A0A4;
+        --diff-old-border: #55343A;
+        --diff-new-bg: #1F3324;
+        --diff-new-text: #9ED8A8;
+        --header-bg: #141517;
+        --header-text: #F0EFEC;
+        --header-label: #8A8884;
+        --header-value: #D6D4CF;
+        --hover-tint: rgba(255,255,255,0.05);
+        --shadow: rgba(0,0,0,0.5);
+        --shadow-strong: rgba(0,0,0,0.6);
+        --backdrop: rgba(0,0,0,0.5);
+        color-scheme: dark;
+    }
 }
 
 * { box-sizing: border-box; }
@@ -895,7 +967,7 @@ body {
 }
 .prose code { font-family: var(--font-mono); font-size: 0.88em; }
 .prose :not(pre) > code {
-    background: rgba(0,0,0,0.06); padding: 0.15em 0.4em; border-radius: 3px;
+    background: var(--inline-code-bg); padding: 0.15em 0.4em; border-radius: 3px;
 }
 .prose blockquote {
     border-left: 3px solid var(--divider); padding-left: 1em; margin: 0.75em 0;
@@ -903,8 +975,8 @@ body {
 }
 .prose table { border-collapse: collapse; margin: 0.75em 0; width: 100%; font-family: var(--font-sans); font-size: 0.9em; }
 .prose th, .prose td { border: 1px solid var(--divider); padding: 0.5em 0.75em; text-align: left; }
-.prose th { background: #f5f4f1; font-weight: 600; }
-.prose a { color: #3A7CA5; text-decoration: underline; text-underline-offset: 2px; }
+.prose th { background: var(--table-head-bg); font-weight: 600; }
+.prose a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
 .prose hr { border: none; border-top: 1px solid var(--divider); margin: 1.2em 0; }
 .prose img { max-width: 100%; border-radius: 6px; }
 
@@ -912,7 +984,7 @@ body {
 .thinking-prose {
     font-family: var(--font-serif);
     font-style: italic; font-size: 0.875rem; line-height: 1.65;
-    color: #6B6280;
+    color: var(--thinking-text);
 }
 .thinking-prose code { font-style: normal; }
 .thinking-prose pre > code { font-style: normal; }
@@ -921,8 +993,8 @@ body {
 .tool-scroll { max-height: 350px; overflow-y: auto; }
 .tool-scroll::-webkit-scrollbar { width: 6px; }
 .tool-scroll::-webkit-scrollbar-track { background: transparent; }
-.tool-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
-.tool-scroll::-webkit-scrollbar-thumb:hover { background: #aaa; }
+.tool-scroll::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+.tool-scroll::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
 /* ── Labels ── */
 .role-label {
@@ -954,8 +1026,8 @@ body {
     white-space: pre-wrap; word-break: break-word;
     margin: 0; padding: 0.375rem 0.625rem;
 }
-.diff-old { background: #FBEAEA; color: #8a1f1f; border-bottom: 1px solid #EFD3D3; }
-.diff-new { background: #E9F4EB; color: #1f5f2a; }
+.diff-old { background: var(--diff-old-bg); color: var(--diff-old-text); border-bottom: 1px solid var(--diff-old-border); }
+.diff-new { background: var(--diff-new-bg); color: var(--diff-new-text); }
 .diff-wrap { border: 1px solid var(--tool-border); border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }
 details.sub summary {
     cursor: pointer; user-select: none; list-style: none;
@@ -969,18 +1041,18 @@ details.sub .tool-input { margin-top: 0.25rem; }
 
 /* ── Session header ── */
 .session-header {
-    background: #2D2D2D; color: #F0EFEC;
+    background: var(--header-bg); color: var(--header-text);
     border-bottom: 3px solid var(--user-accent);
     padding: 1.5rem max(1.5rem, env(safe-area-inset-left));
 }
 .session-header .meta-label {
     font-family: var(--font-mono);
     font-size: 0.625rem; letter-spacing: 0.1em;
-    text-transform: uppercase; color: #8A8884;
+    text-transform: uppercase; color: var(--header-label);
 }
 .session-header .meta-value {
     font-family: var(--font-mono);
-    font-size: 0.8125rem; color: #E0DFDB;
+    font-size: 0.8125rem; color: var(--header-value);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1028,7 +1100,7 @@ details.collapsible[open] summary .chevron { transform: rotate(90deg); }
 }
 .nav-tools button {
     font: inherit; font-size: 0.72rem; padding: 0.25rem 0.5rem; cursor: pointer;
-    background: #fff; color: var(--text-primary); border: 1px solid var(--divider); border-radius: 4px;
+    background: var(--surface); color: var(--text-primary); border: 1px solid var(--divider); border-radius: 4px;
 }
 .nav-tools button:hover { border-color: var(--text-tertiary); }
 .nav-tools label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; width: 100%; margin-top: 0.25rem; }
@@ -1038,7 +1110,7 @@ details.collapsible[open] summary .chevron { transform: rotate(90deg); }
     font-family: var(--font-sans); font-size: 0.8rem; line-height: 1.3; color: var(--text-primary);
     text-decoration: none; cursor: pointer;
 }
-.nav-item:hover { background: rgba(0,0,0,0.04); }
+.nav-item:hover { background: var(--hover-tint); }
 .nav-item.active { border-left-color: var(--user-accent); background: var(--user-bg); }
 .nav-item .nav-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item .nav-time { display: block; font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-tertiary); margin-top: 0.1rem; }
@@ -1057,21 +1129,37 @@ details.collapsible[open] summary .chevron { transform: rotate(90deg); }
 .nav-toggle {
     position: fixed; top: 0.6rem; left: 0.6rem; z-index: 30; display: none;
     font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em;
-    padding: 0.35rem 0.6rem; cursor: pointer; background: #fff; color: var(--text-primary);
-    border: 1px solid var(--divider); border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    padding: 0.35rem 0.6rem; cursor: pointer; background: var(--surface); color: var(--text-primary);
+    border: 1px solid var(--divider); border-radius: 4px; box-shadow: 0 1px 3px var(--shadow);
 }
-.nav-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.25); z-index: 19; display: none; }
+.nav-backdrop { position: fixed; inset: 0; background: var(--backdrop); z-index: 19; display: none; }
 body.has-nav { padding-left: var(--nav-w); }
 body.hide-tools .tool-use, body.hide-tools .tool-result { display: none; }
 @media (max-width: 1100px) {
     body.has-nav { padding-left: 0; }
-    .nav { transform: translateX(-100%); box-shadow: 0 0 24px rgba(0,0,0,0.15); }
+    .nav { transform: translateX(-100%); box-shadow: 0 0 24px var(--shadow-strong); }
     body.nav-open .nav { transform: translateX(0); }
     body.nav-open .nav-backdrop { display: block; }
     .nav-toggle { display: block; }
     body.nav-open .nav-toggle { display: none; }
 }
-@media print { .nav, .nav-toggle, .nav-backdrop { display: none !important; } body.has-nav { padding-left: 0; } }
+/* Print: no chrome, nothing clipped or collapsed, black on white header.
+   Details are opened by the beforeprint handler; the CSS below is the
+   fallback for engines that skip that event. */
+@media print {
+    .nav, .nav-toggle, .nav-backdrop { display: none !important; }
+    body.has-nav { padding-left: 0; }
+    body { background: #fff; color: #000; }
+    .tool-scroll { max-height: none !important; overflow: visible !important; }
+    details:not([open]) > *:not(summary) { display: block !important; }
+    details.collapsible summary .chevron, details.sub summary::before { display: none !important; }
+    .tool-use, .tool-result, pre, .diff-wrap, .day-divider { break-inside: avoid; page-break-inside: avoid; }
+    .session-header { background: #fff !important; color: #000 !important; border-bottom-color: #000; }
+    .session-header .meta-label { color: #444 !important; }
+    .session-header .meta-value { color: #000 !important; white-space: normal; }
+    .prose a { color: #000; }
+    img { max-width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -1423,6 +1511,19 @@ function prefSet(key, val) { try { localStorage.setItem(key, val); } catch (e) {
 function setAllDetails(open) {
     document.querySelectorAll('#app details').forEach(function(d) { d.open = open; });
 }
+
+// Print opens every collapsed block so nothing is lost, then restores them.
+var _printClosed = [];
+window.addEventListener('beforeprint', function() {
+    _printClosed = [];
+    document.querySelectorAll('#app details:not([open])').forEach(function(d) {
+        _printClosed.push(d); d.open = true;
+    });
+});
+window.addEventListener('afterprint', function() {
+    _printClosed.forEach(function(d) { d.open = false; });
+    _printClosed = [];
+});
 
 function buildNav(entries) {
     if (!entries.length) return;
