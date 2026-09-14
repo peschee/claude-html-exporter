@@ -117,7 +117,7 @@ def _read_session_stub(path):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if obj.get("type") == "user":
+                if obj.get("type") == "user" and not obj.get("isCompactSummary"):
                     msg = obj.get("message", {})
                     content = msg.get("content", "")
                     prompt = content if isinstance(content, str) else ""
@@ -190,6 +190,11 @@ def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
                                     )
                                     break
                 elif obj.get("type") == "user":
+                    if obj.get("isCompactSummary"):
+                        preview["messages"].append(
+                            {"role": "Compacted", "text": "(context summary)"}
+                        )
+                        continue
                     msg = obj.get("message", {})
                     content = msg.get("content", "")
                     if isinstance(content, str) and content.strip():
@@ -335,7 +340,11 @@ def build_conversation(lines):
     relevant = [
         obj
         for obj in lines
-        if obj.get("type") in ("user", "assistant") and not obj.get("isSidechain")
+        if (
+            obj.get("type") in ("user", "assistant")
+            or _is_compact_boundary(obj)
+        )
+        and not obj.get("isSidechain")
     ]
 
     # Pass 1: merge assistant messages by id and build tool map
@@ -406,9 +415,42 @@ def build_conversation(lines):
     for obj in relevant:
         ts = obj.get("timestamp", "")
 
+        if _is_compact_boundary(obj):
+            meta = obj.get("compactMetadata") or {}
+            conversation.append(
+                {
+                    "role": "compaction",
+                    "timestamp": ts,
+                    "trigger": meta.get("trigger", ""),
+                    "pre_tokens": meta.get("preTokens"),
+                    "post_tokens": meta.get("postTokens"),
+                    "summary": "",
+                }
+            )
+            continue
+
         if obj.get("type") == "user":
             msg = obj.get("message", {})
             content = msg.get("content", "")
+
+            if obj.get("isCompactSummary"):
+                # The summary Claude wrote for itself. It is not a human turn,
+                # so fold it into the boundary that precedes it (or make one
+                # when the session was resumed into a fresh file).
+                text = content if isinstance(content, str) else ""
+                if not (conversation and conversation[-1]["role"] == "compaction"):
+                    conversation.append(
+                        {
+                            "role": "compaction",
+                            "timestamp": ts,
+                            "trigger": "",
+                            "pre_tokens": None,
+                            "post_tokens": None,
+                            "summary": "",
+                        }
+                    )
+                conversation[-1]["summary"] = text
+                continue
 
             if isinstance(content, str):
                 if content.strip():
@@ -480,6 +522,10 @@ def build_conversation(lines):
                     )
 
     return conversation
+
+
+def _is_compact_boundary(obj):
+    return obj.get("type") == "system" and obj.get("subtype") == "compact_boundary"
 
 
 def _normalize_tool_result(block, tool_map):
@@ -621,6 +667,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     --user-label: #B8462A;
     --assistant-accent: #3D405B;
     --assistant-bg: #FFFFFF;
+    --compact-accent: #A6832E;
+    --compact-bg: #FBF7EC;
     --thinking-accent: #8B7EC8;
     --thinking-bg: #F6F4FB;
     --thinking-border: #D4CEE8;
@@ -833,6 +881,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (msg.role === 'user') renderUserMessage(body, msg);
         else if (msg.role === 'assistant') renderAssistantMessage(body, msg);
         else if (msg.role === 'tool') renderToolMessage(body, msg);
+        else if (msg.role === 'compaction') renderCompaction(body, msg);
     });
 
     var spacer = document.createElement('div');
@@ -883,6 +932,40 @@ function renderToolMessage(container, msg) {
         }
     });
     container.appendChild(section);
+}
+
+/* ── Compaction Boundary ── */
+function renderCompaction(container, msg) {
+    var section = el('div', '', 'padding:1rem 0;padding-left:1.25rem;');
+    var parts = ['Context compacted'];
+    if (msg.trigger) parts.push(msg.trigger);
+    if (msg.pre_tokens && msg.post_tokens) {
+        parts.push(fmtTokens(msg.pre_tokens) + ' \u2192 ' + fmtTokens(msg.post_tokens) + ' tokens');
+    }
+    section.appendChild(labelRow(parts.join(' \u00b7 '), 'var(--compact-accent)', msg.timestamp));
+
+    if (msg.summary) {
+        var details = document.createElement('details');
+        details.className = 'collapsible';
+        details.style.cssText = 'margin:0.25rem 0 0;background:var(--compact-bg);border-left:3px dashed var(--compact-accent);border-radius:0 6px 6px 0;overflow:hidden;';
+        var summary = document.createElement('summary');
+        summary.style.cssText = 'padding:0.625rem 1rem;display:flex;align-items:center;gap:0.375rem;';
+        var chevron = el('span', 'chevron'); chevron.textContent = '\u25b6';
+        summary.appendChild(chevron);
+        var lbl = el('span'); lbl.className = 'block-label'; lbl.style.color = 'var(--compact-accent)';
+        lbl.textContent = 'Summary carried forward';
+        summary.appendChild(lbl);
+        details.appendChild(summary);
+        var bd = el('div', 'prose tool-scroll', 'padding:0 1rem 0.875rem;');
+        bd.innerHTML = renderMarkdown(msg.summary);
+        details.appendChild(bd);
+        section.appendChild(details);
+    }
+    container.appendChild(section);
+}
+
+function fmtTokens(n) {
+    return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
 }
 
 /* ── Thinking Block ── */
@@ -1454,7 +1537,12 @@ class SessionBrowser:
             elif kind == "divider":
                 self._safe_addnstr(y, left + 1, text, usable_w, curses.A_DIM)
             elif kind == "role":
-                role_color = self._color(8) if "Human" in text else self._color(9)
+                if "Human" in text:
+                    role_color = self._color(8)
+                elif "Compacted" in text:
+                    role_color = self._color(7)
+                else:
+                    role_color = self._color(9)
                 self._safe_addnstr(
                     y, left + 1, text, usable_w, role_color | curses.A_BOLD
                 )

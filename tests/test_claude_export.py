@@ -181,6 +181,53 @@ class TestBuildConversation(unittest.TestCase):
         self.assertEqual(conversation[0]["blocks"][0]["text"], "main")
 
 
+    def test_build_conversation_folds_compaction_into_boundary(self):
+        lines = [
+            {"type": "user", "timestamp": "t1", "message": {"content": "before"}},
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "timestamp": "t2",
+                "compactMetadata": {
+                    "trigger": "manual",
+                    "preTokens": 118242,
+                    "postTokens": 8744,
+                },
+            },
+            {
+                "type": "user",
+                "timestamp": "t3",
+                "isCompactSummary": True,
+                "message": {"content": "This session is being continued..."},
+            },
+            {"type": "user", "timestamp": "t4", "message": {"content": "after"}},
+        ]
+
+        conversation = claude_export.build_conversation(lines)
+        self.assertEqual([m["role"] for m in conversation], ["user", "compaction", "user"])
+        boundary = conversation[1]
+        self.assertEqual(boundary["trigger"], "manual")
+        self.assertEqual(boundary["pre_tokens"], 118242)
+        self.assertEqual(boundary["post_tokens"], 8744)
+        self.assertEqual(boundary["summary"], "This session is being continued...")
+
+    def test_build_conversation_summary_without_boundary(self):
+        lines = [
+            {
+                "type": "user",
+                "timestamp": "t1",
+                "isCompactSummary": True,
+                "message": {"content": "summary only"},
+            },
+            {"type": "user", "timestamp": "t2", "message": {"content": "after"}},
+        ]
+
+        conversation = claude_export.build_conversation(lines)
+        self.assertEqual([m["role"] for m in conversation], ["compaction", "user"])
+        self.assertEqual(conversation[0]["summary"], "summary only")
+        self.assertIsNone(conversation[0]["pre_tokens"])
+
+
 class TestNormalizeToolResult(unittest.TestCase):
     def test_normalize_tool_result_list_content(self):
         block = {
@@ -345,6 +392,33 @@ class TestReadSessionStub(unittest.TestCase):
             os.unlink(path)
 
 
+    def test_read_session_stub_skips_compaction_summary(self):
+        lines = [
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t1",
+                    "isCompactSummary": True,
+                    "message": {"content": "This session is being continued"},
+                }
+            ),
+            json.dumps(
+                {"type": "user", "timestamp": "t2", "message": {"content": "real"}}
+            ),
+        ]
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(lines))
+            path = handle.name
+
+        try:
+            stub = claude_export._read_session_stub(path)
+            self.assertEqual(stub["first_prompt"], "real")
+            self.assertEqual(stub["created"], "t2")
+        finally:
+            os.unlink(path)
+
+
 class TestReadPreview(unittest.TestCase):
     def test_read_preview_skips_tool_results_and_truncates(self):
         lines = [
@@ -430,6 +504,35 @@ class TestReadPreview(unittest.TestCase):
             self.assertEqual(len(preview["messages"]), 1)
             self.assertEqual(preview["messages"][0]["role"], "Human")
             self.assertEqual(preview["messages"][0]["text"], "Hello")
+        finally:
+            os.unlink(path)
+
+
+    def test_read_preview_marks_compaction_summary(self):
+        lines = [
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t1",
+                    "isCompactSummary": True,
+                    "message": {"content": "This session is being continued"},
+                }
+            ),
+            json.dumps(
+                {"type": "user", "timestamp": "t2", "message": {"content": "real"}}
+            ),
+        ]
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(lines))
+            path = handle.name
+
+        try:
+            preview = claude_export._read_preview(path)
+            self.assertEqual(
+                [m["role"] for m in preview["messages"]], ["Compacted", "Human"]
+            )
+            self.assertEqual(preview["messages"][1]["text"], "real")
         finally:
             os.unlink(path)
 

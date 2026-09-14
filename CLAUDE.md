@@ -23,6 +23,12 @@ assets/HTML generation → `SessionBrowser` (curses TUI) → `cmd_*` handlers �
 - **Stdlib only** — do not add third-party dependencies.
 - Tool results are truncated at `TRUNCATE_LIMIT` (50,000 chars).
 - `build_conversation` skips sidechain messages.
+- Compaction leaves two records back to back: a `system`/`compact_boundary`
+  line with `compactMetadata`, then a `user` line with `isCompactSummary`
+  whose content is the summary Claude wrote. The pre-compaction history stays
+  in the file. The exporter folds both into one `role: compaction` message
+  (divider + collapsible summary) and the TUI stub/preview skip the summary
+  so it never shows up as a human prompt.
 - Exported `*.html` files are gitignored build artifacts.
 - macOS-oriented: uses native system fonts (SF, New York, SF Mono) in output.
 - marked v5+ removed the inline `highlight` option; highlighting runs as a
