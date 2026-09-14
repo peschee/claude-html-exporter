@@ -999,6 +999,17 @@ details.collapsible[open] summary .chevron { transform: rotate(90deg); }
 /* ── Divider ── */
 .msg-divider { border: none; border-top: 1px solid var(--divider); margin: 0; }
 
+/* ── Day divider ── */
+.day-divider {
+    display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0 0.25rem;
+}
+.day-divider::before, .day-divider::after { content: ''; flex: 1; border-top: 1px solid var(--divider); }
+.day-divider .day-pill {
+    font-family: var(--font-mono); font-size: 0.6875rem; letter-spacing: 0.05em;
+    color: var(--text-tertiary); background: var(--page-bg);
+    border: 1px solid var(--divider); border-radius: 999px; padding: 0.15rem 0.65rem;
+}
+
 /* ── Code highlight overrides ── */
 .prose pre .hljs { background: transparent; }
 
@@ -1037,6 +1048,12 @@ details.collapsible[open] summary .chevron { transform: rotate(90deg); }
     color: var(--compact-accent); opacity: 0.8; cursor: pointer;
 }
 .nav-compact::before, .nav-compact::after { content: ''; flex: 1; border-top: 1px dashed var(--compact-accent); opacity: 0.5; }
+.nav-day {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.75rem 0.15rem;
+    font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-tertiary);
+}
+.nav-day::after { content: ''; flex: 1; border-top: 1px solid var(--divider); }
 .nav-toggle {
     position: fixed; top: 0.6rem; left: 0.6rem; z-index: 30; display: none;
     font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em;
@@ -1100,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var metaGrid = document.createElement('div');
     metaGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:0.75rem 2rem;';
     var metaFields = [];
-    if (metadata.date) metaFields.push(['Date', formatDate(metadata.date)]);
+    if (metadata.date) metaFields.push(['Date', formatDateRange(metadata.date, lastTimestamp(messages))]);
     if (metadata.model) metaFields.push(['Model', metadata.model]);
     if (metadata.cwd) metaFields.push(['Directory', metadata.cwd]);
     if (metadata.git_branch) metaFields.push(['Branch', metadata.git_branch]);
@@ -1108,6 +1125,8 @@ document.addEventListener('DOMContentLoaded', function() {
     metaFields.forEach(function(pair) {
         var item = document.createElement('div');
         item.style.minWidth = '0';
+        // A start/end range needs two grid cells to stay readable.
+        if (pair[0] === 'Date' && pair[1].indexOf('\u2192') !== -1) item.style.gridColumn = 'span 2';
         var lbl = document.createElement('div'); lbl.className = 'meta-label'; lbl.textContent = pair[0];
         var val = document.createElement('div'); val.className = 'meta-value'; val.textContent = pair[1];
         val.title = pair[1];
@@ -1123,8 +1142,16 @@ document.addEventListener('DOMContentLoaded', function() {
     app.appendChild(body);
 
     var navEntries = [];
+    var lastDay = null;
     messages.forEach(function(msg, idx) {
         if (idx > 0) { var hr = document.createElement('hr'); hr.className = 'msg-divider'; body.appendChild(hr); }
+        var day = dayKey(msg.timestamp);
+        var newDay = false;
+        if (day && day !== lastDay) {
+            body.appendChild(dayDivider(msg.timestamp));
+            lastDay = day;
+            newDay = true;
+        }
         var section = null;
         if (msg.role === 'user') section = renderUserMessage(body, msg);
         else if (msg.role === 'assistant') renderAssistantMessage(body, msg);
@@ -1132,7 +1159,7 @@ document.addEventListener('DOMContentLoaded', function() {
         else if (msg.role === 'compaction') section = renderCompaction(body, msg);
         if (section) {
             section.id = 'msg-' + idx;
-            navEntries.push({ id: section.id, el: section, msg: msg });
+            navEntries.push({ id: section.id, el: section, msg: msg, day: day, newDay: newDay });
         }
     });
 
@@ -1415,8 +1442,15 @@ function buildNav(entries) {
 
     var list = el('div', 'nav-list');
     var items = [];
+    var navDay = null;
     entries.forEach(function(e) {
         var item;
+        if (e.msg.role !== 'compaction' && e.day && e.day !== navDay) {
+            navDay = e.day;
+            var dayRow = el('div', 'nav-day');
+            dayRow.textContent = formatDay(e.msg.timestamp, true);
+            list.appendChild(dayRow);
+        }
         if (e.msg.role === 'compaction') {
             item = el('div', 'nav-compact');
             item.textContent = 'compacted';
@@ -1528,7 +1562,7 @@ function labelRow(name, color, timestamp) {
     row.appendChild(lbl);
     if (timestamp) {
         var ts = el('span', '', 'font-family:var(--font-mono);font-size:0.6875rem;color:var(--text-tertiary);');
-        ts.textContent = formatTime(timestamp); row.appendChild(ts);
+        ts.textContent = formatTime(timestamp); ts.title = fullStamp(timestamp); row.appendChild(ts);
     }
     return row;
 }
@@ -1647,6 +1681,49 @@ function formatDate(s) {
 function formatTime(s) {
     try { var d = new Date(s); return d.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit'}); }
     catch(e) { return ''; }
+}
+
+/* Local calendar day, used to detect day changes between messages. */
+function dayKey(s) {
+    if (!s) return '';
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+
+/* "Fri, Sep 12 2026" (short = no weekday). */
+function formatDay(s, short) {
+    try {
+        var d = new Date(s);
+        var opts = {year:'numeric', month:'short', day:'numeric'};
+        if (!short) opts.weekday = 'short';
+        return d.toLocaleDateString('en-US', opts);
+    } catch(e) { return s; }
+}
+
+function fullStamp(s) {
+    try { var d = new Date(s); return d.toLocaleString('en-US') + '\n' + s; }
+    catch(e) { return s; }
+}
+
+function formatDateRange(startIso, endIso) {
+    if (!endIso || dayKey(startIso) === dayKey(endIso)) return formatDate(startIso);
+    var f = function(iso) { return formatDay(iso, true) + ' ' + formatTime(iso); };
+    return f(startIso) + ' \u2192 ' + f(endIso);
+}
+
+function lastTimestamp(msgs) {
+    for (var i = msgs.length - 1; i >= 0; i--) { if (msgs[i].timestamp) return msgs[i].timestamp; }
+    return '';
+}
+
+function dayDivider(ts) {
+    var row = el('div', 'day-divider');
+    var pill = el('span', 'day-pill');
+    pill.textContent = formatDay(ts, false);
+    pill.title = fullStamp(ts);
+    row.appendChild(pill);
+    return row;
 }
 </script>
 </body>
