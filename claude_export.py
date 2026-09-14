@@ -16,9 +16,11 @@ import json
 import locale
 import os
 import re
+import subprocess
 import sys
 import traceback
 import unicodedata
+import webbrowser
 from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1297,6 +1299,21 @@ def _truncate(text, width):
     return text[: max(0, width - 3)] + "..." if width > 3 else text[:width]
 
 
+def _copy_to_clipboard(text):
+    """Put text on the system clipboard. Returns True on success.
+
+    Tries pbcopy (macOS), then xclip and wl-copy (Linux). Missing binaries are
+    skipped; a non-zero exit is treated as failure too."""
+    for cmd in (["pbcopy"], ["xclip", "-selection", "clipboard"], ["wl-copy"]):
+        try:
+            result = subprocess.run(cmd, input=text.encode("utf-8"), timeout=5)
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
 def _tui_safe_text(text):
     """Make text safe for curses: one char per terminal cell, no controls.
 
@@ -1353,6 +1370,7 @@ class SessionBrowser:
         self._preview_cache = {}
         self._preview_cache_order = []
         self._cache_max = 20
+        self.last_export = None  # absolute path of the most recent export
 
     def run(self):
         """Main entry point — called inside curses.wrapper."""
@@ -1537,7 +1555,7 @@ class SessionBrowser:
             if self.preview_focus:
                 bar = " Tab:List  j/k:Scroll preview  q:Quit"
             else:
-                bar = " j/k:Navigate  /:Filter  Enter:Export  Tab:Preview  q:Quit"
+                bar = " j/k:Nav  /:Filter  Enter:Export  o:Open  y:Copy  Tab:Preview  q:Quit"
             bar = bar.ljust(w)
         attr = self._color(2)
         if self.status_message and not self.filter_mode:
@@ -1722,6 +1740,8 @@ class SessionBrowser:
             "  g/Home     First session",
             "  G/End      Last session",
             "  Enter      Export session / toggle project",
+            "  o          Open last export in browser",
+            "  y          Copy last export path to clipboard",
             "  h/Left     Collapse project group",
             "  l/Right    Expand project group",
             "  Tab        Toggle preview pane focus",
@@ -1760,6 +1780,10 @@ class SessionBrowser:
             return "quit"
         elif key == ord("?"):
             self.show_help = True
+        elif key == ord("o"):
+            self._open_last_export()
+        elif key == ord("y"):
+            self._copy_last_export_path()
         elif self.preview_focus:
             # In preview focus mode, j/k scroll the preview pane
             if key in (ord("j"), curses.KEY_DOWN):
@@ -1873,12 +1897,42 @@ class SessionBrowser:
 
         try:
             output_path, message_count, _ = export_session(path)
-            self.status_message = f"Exported {message_count} messages to {output_path}"
-            self.status_timeout = 50
+            self.last_export = os.path.abspath(output_path)
+            self.status_message = (
+                f"Exported {message_count} messages to {self.last_export}"
+                "  (o: open, y: copy path)"
+            )
+            self.status_timeout = 80
         except Exception as e:
             self.status_message = f"Export error: {e}"
             self.status_timeout = 50
             _debug("export failed", e)
+
+    def _open_last_export(self):
+        """Open the most recent export in the default browser."""
+        if not self.last_export or not os.path.exists(self.last_export):
+            self.status_message = "Nothing exported yet"
+            self.status_timeout = 30
+            return
+        try:
+            webbrowser.open("file://" + self.last_export)
+            self.status_message = f"Opened {self.last_export}"
+        except Exception as e:
+            self.status_message = f"Open failed: {e}"
+            _debug("open export failed", e)
+        self.status_timeout = 50
+
+    def _copy_last_export_path(self):
+        """Copy the most recent export path to the clipboard."""
+        if not self.last_export:
+            self.status_message = "Nothing exported yet"
+            self.status_timeout = 30
+            return
+        if _copy_to_clipboard(self.last_export):
+            self.status_message = "Copied path"
+        else:
+            self.status_message = f"Clipboard unavailable, path: {self.last_export}"
+        self.status_timeout = 50
 
     def _get_preview(self, session):
         """Get preview data for a session, using LRU cache."""

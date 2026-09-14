@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
@@ -898,6 +898,66 @@ class TestProjectGroupOrdering(unittest.TestCase):
 
         headers = [i.data for i in browser.items if i.kind == "header"]
         self.assertEqual(headers, ["me/beta", "me/alpha", "me/gamma"])
+
+
+class TestExportActions(unittest.TestCase):
+    def _browser(self):
+        return claude_export.SessionBrowser(MagicMock())
+
+    def test_copy_to_clipboard_success(self):
+        with patch("claude_export.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=0)
+            self.assertTrue(claude_export._copy_to_clipboard("/tmp/x.html"))
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["pbcopy"])
+        self.assertEqual(run.call_args.kwargs["input"], b"/tmp/x.html")
+
+    def test_copy_to_clipboard_falls_back_then_fails(self):
+        with patch("claude_export.subprocess.run", side_effect=FileNotFoundError) as run:
+            self.assertFalse(claude_export._copy_to_clipboard("x"))
+        # pbcopy, xclip, wl-copy all tried
+        self.assertEqual(run.call_count, 3)
+
+    def test_export_session_records_last_export(self):
+        browser = self._browser()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "s.jsonl")
+            Path(src).write_text("{}\n")
+            with patch(
+                "claude_export.export_session",
+                return_value=("out.html", 7, {}),
+            ):
+                browser._export_session({"path": src})
+        self.assertEqual(browser.last_export, os.path.abspath("out.html"))
+        self.assertIn("Exported 7 messages", browser.status_message)
+        self.assertIn("o: open, y: copy path", browser.status_message)
+
+    def test_open_and_copy_without_export(self):
+        browser = self._browser()
+        browser._open_last_export()
+        self.assertEqual(browser.status_message, "Nothing exported yet")
+        browser._copy_last_export_path()
+        self.assertEqual(browser.status_message, "Nothing exported yet")
+
+    def test_open_last_export_uses_webbrowser(self):
+        browser = self._browser()
+        with tempfile.NamedTemporaryFile(suffix=".html") as f:
+            browser.last_export = f.name
+            with patch("claude_export.webbrowser.open") as wb:
+                browser._open_last_export()
+            wb.assert_called_once_with("file://" + f.name)
+        self.assertTrue(browser.status_message.startswith("Opened "))
+
+    def test_copy_last_export_path_status(self):
+        browser = self._browser()
+        browser.last_export = "/tmp/out.html"
+        with patch("claude_export._copy_to_clipboard", return_value=True):
+            browser._copy_last_export_path()
+        self.assertEqual(browser.status_message, "Copied path")
+        with patch("claude_export._copy_to_clipboard", return_value=False):
+            browser._copy_last_export_path()
+        self.assertIn("Clipboard unavailable", browser.status_message)
+        self.assertIn("/tmp/out.html", browser.status_message)
 
 
 if __name__ == "__main__":
