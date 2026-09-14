@@ -18,7 +18,7 @@ import re
 import sys
 import traceback
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -40,6 +40,22 @@ def _debug(message, exc=None):
 # ---------------------------------------------------------------------------
 # Session discovery
 # ---------------------------------------------------------------------------
+
+
+def _file_mtime_iso(path):
+    """File mtime as an ISO 8601 UTC string ("" if the file is missing).
+
+    Matches the format of `modified` in sessions-index.json so lexical
+    ordering in `_session_activity` keeps working across both sources."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    return (
+        datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def find_sessions(project_filter=None):
@@ -81,7 +97,8 @@ def find_sessions(project_filter=None):
                             if entry.get("fullPath")
                             else "",
                             "created": entry.get("created", ""),
-                            "modified": entry.get("modified", ""),
+                            "modified": entry.get("modified", "")
+                            or _file_mtime_iso(entry.get("fullPath", "")),
                             "git_branch": entry.get("gitBranch", ""),
                             "message_count": entry.get("messageCount", 0),
                         }
@@ -104,7 +121,7 @@ def find_sessions(project_filter=None):
                     "first_prompt": info.get("first_prompt", ""),
                     "title": info.get("title", ""),
                     "created": info.get("created", ""),
-                    "modified": "",
+                    "modified": _file_mtime_iso(jsonl_path),
                     "git_branch": info.get("git_branch", ""),
                     "message_count": 0,
                 }

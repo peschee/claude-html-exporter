@@ -790,6 +790,72 @@ class TestFindSessions(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         self.assertEqual(sessions[0]["project"], "Project-One")
 
+    def test_find_sessions_modified_falls_back_to_file_mtime(self):
+        # No sessions-index.json: "modified" must come from the file mtime so
+        # activity ordering does not degrade to creation time. Session "old"
+        # was created later but touched earlier than "new".
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "proj"
+            project.mkdir()
+
+            def write(name, created):
+                path = project / f"{name}.jsonl"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "timestamp": created,
+                            "message": {"content": name},
+                        }
+                    )
+                )
+                return path
+
+            old_path = write("old", "2026-03-01T00:00:00Z")
+            new_path = write("new", "2026-01-01T00:00:00Z")
+            # 2026-02-01T00:00:00Z and 2026-04-01T00:00:00Z as epoch seconds
+            os.utime(old_path, (1769904000, 1769904000))
+            os.utime(new_path, (1775001600, 1775001600))
+
+            with patch.object(claude_export, "CLAUDE_DIR", root):
+                sessions = claude_export.find_sessions()
+
+        by_id = {s["session_id"]: s for s in sessions}
+        self.assertEqual(by_id["old"]["modified"], "2026-02-01T00:00:00Z")
+        self.assertEqual(by_id["new"]["modified"], "2026-04-01T00:00:00Z")
+
+        ordered = sorted(sessions, key=claude_export._session_activity, reverse=True)
+        self.assertEqual([s["session_id"] for s in ordered], ["new", "old"])
+
+    def test_find_sessions_index_entry_without_modified_uses_mtime(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = root / "proj"
+            project.mkdir()
+            session_path = project / "sid.jsonl"
+            session_path.write_text("")
+            os.utime(session_path, (1769904000, 1769904000))
+            (project / "sessions-index.json").write_text(
+                json.dumps(
+                    {
+                        "entries": [
+                            {
+                                "sessionId": "sid",
+                                "fullPath": str(session_path),
+                                "firstPrompt": "hi",
+                                "created": "2026-01-01T00:00:00Z",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            with patch.object(claude_export, "CLAUDE_DIR", root):
+                sessions = claude_export.find_sessions()
+
+        self.assertEqual(sessions[0]["modified"], "2026-02-01T00:00:00Z")
+
 
 class TestProjectGroupOrdering(unittest.TestCase):
     def test_build_items_orders_groups_by_recent_activity(self):
