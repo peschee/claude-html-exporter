@@ -491,6 +491,63 @@ class TestReadSessionStub(unittest.TestCase):
             os.unlink(path)
 
 
+class TestAiTitle(unittest.TestCase):
+    def _write(self, lines):
+        handle = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        handle.write("\n".join(lines))
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return handle.name
+
+    def test_read_ai_title_picks_last_record(self):
+        path = self._write(
+            [
+                json.dumps({"type": "user", "message": {"content": "hi"}}),
+                json.dumps({"type": "ai-title", "aiTitle": "First   title"}),
+                json.dumps({"type": "assistant", "message": {"content": []}}),
+                json.dumps({"type": "ai-title", "aiTitle": "Final title"}),
+            ]
+        )
+        self.assertEqual(claude_export._read_ai_title(path), "Final title")
+
+    def test_read_ai_title_missing(self):
+        path = self._write([json.dumps({"type": "user", "message": {"content": "hi"}})])
+        self.assertEqual(claude_export._read_ai_title(path), "")
+        self.assertEqual(claude_export._read_ai_title("/nonexistent/x.jsonl"), "")
+
+    def test_session_stub_and_label_use_title(self):
+        path = self._write(
+            [
+                json.dumps({"type": "user", "timestamp": "t1", "message": {"content": "prompt"}}),
+                json.dumps({"type": "ai-title", "aiTitle": "Nice title"}),
+            ]
+        )
+        stub = claude_export._read_session_stub(path)
+        self.assertEqual(stub["title"], "Nice title")
+        self.assertEqual(stub["first_prompt"], "prompt")
+        self.assertEqual(claude_export._session_label(stub), "Nice title")
+        self.assertEqual(
+            claude_export._session_label({"first_prompt": "prompt", "title": ""}),
+            "prompt",
+        )
+
+    def test_extract_metadata_picks_last_title(self):
+        lines = [
+            {"type": "ai-title", "aiTitle": "old"},
+            {"type": "user", "sessionId": "s", "timestamp": "t"},
+            {"type": "ai-title", "aiTitle": "new"},
+        ]
+        meta = claude_export.extract_metadata(lines)
+        self.assertEqual(meta["title"], "new")
+        html = claude_export.generate_html([], meta)
+        self.assertIn("<title>new — Claude Code Session</title>", html)
+
+    def test_extract_metadata_without_title(self):
+        meta = claude_export.extract_metadata([{"type": "user", "timestamp": "t"}])
+        self.assertEqual(meta["title"], "")
+        self.assertIn("<title>Claude Code Session", claude_export.generate_html([], meta))
+
+
 class TestCleanPrompt(unittest.TestCase):
     def test_unwraps_slash_command_with_args(self):
         raw = (

@@ -46,7 +46,8 @@ def find_sessions(project_filter=None):
     """Scan ~/.claude/projects/ for sessions.
 
     Returns list of dicts with keys:
-        session_id, project, path, first_prompt, created, modified, git_branch
+        session_id, project, path, first_prompt, title, created, modified,
+        git_branch
     """
     sessions = []
     if not CLAUDE_DIR.exists():
@@ -76,6 +77,9 @@ def find_sessions(project_filter=None):
                             "project_path": entry.get("projectPath", ""),
                             "path": entry.get("fullPath", ""),
                             "first_prompt": _clean_prompt(entry.get("firstPrompt", "")),
+                            "title": _read_ai_title(entry.get("fullPath", ""))
+                            if entry.get("fullPath")
+                            else "",
                             "created": entry.get("created", ""),
                             "modified": entry.get("modified", ""),
                             "git_branch": entry.get("gitBranch", ""),
@@ -98,6 +102,7 @@ def find_sessions(project_filter=None):
                     "project_path": "",
                     "path": str(jsonl_path),
                     "first_prompt": info.get("first_prompt", ""),
+                    "title": info.get("title", ""),
                     "created": info.get("created", ""),
                     "modified": "",
                     "git_branch": info.get("git_branch", ""),
@@ -141,6 +146,43 @@ def _is_slash_command(text):
     return bool(_COMMAND_NAME_RE.search(text or ""))
 
 
+_AI_TITLE_TAIL_BYTES = 64 * 1024
+
+
+def _read_ai_title(path):
+    """Return the session's current generated title, or "".
+
+    Claude Code appends an `ai-title` record each time it renames the session,
+    so the last one wins. Only the file tail is read: the record is rewritten
+    as the session evolves, and reading whole files would make TUI startup
+    scale with total history size."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - _AI_TITLE_TAIL_BYTES))
+            tail = f.read()
+    except OSError as exc:
+        _debug("read ai-title failed", exc)
+        return ""
+    title = ""
+    for raw in tail.splitlines():
+        if b'"ai-title"' not in raw:
+            continue
+        try:
+            obj = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if obj.get("type") == "ai-title" and obj.get("aiTitle"):
+            title = " ".join(str(obj["aiTitle"]).split())
+    return title
+
+
+def _session_label(session):
+    """Human-facing one-liner for a session: generated title, else first prompt."""
+    return session.get("title") or session.get("first_prompt", "")
+
+
 def _read_session_stub(path):
     """Read the first user turns of a JSONL to extract basic info.
 
@@ -164,6 +206,7 @@ def _read_session_stub(path):
                 if not info:
                     info = {
                         "first_prompt": "",
+                        "title": _read_ai_title(path),
                         "created": obj.get("timestamp", ""),
                         "git_branch": obj.get("gitBranch", ""),
                     }
@@ -185,11 +228,12 @@ def _read_session_stub(path):
 def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
     """Read first lines of a JSONL to extract metadata + message preview.
 
-    Returns dict with keys: session_id, model, date, git_branch, cwd, messages.
-    Each message is {role, text} with text truncated to max_chars.
+    Returns dict with keys: session_id, title, model, date, git_branch, cwd,
+    messages. Each message is {role, text} with text truncated to max_chars.
     """
     preview = {
         "session_id": "",
+        "title": _read_ai_title(path),
         "model": "",
         "date": "",
         "git_branch": "",
@@ -355,8 +399,12 @@ def extract_metadata(lines):
         "date": "",
         "git_branch": "",
         "cwd": "",
+        "title": "",
     }
     for obj in lines:
+        # Last ai-title wins: Claude Code rewrites it as the session evolves.
+        if obj.get("type") == "ai-title" and obj.get("aiTitle"):
+            meta["title"] = " ".join(str(obj["aiTitle"]).split())
         if not meta["session_id"] and obj.get("sessionId"):
             meta["session_id"] = obj["sessionId"]
         if not meta["git_branch"] and obj.get("gitBranch"):
@@ -688,7 +736,10 @@ def generate_html(messages, metadata):
     else:
         date_display = "Unknown"
 
-    title = f"Claude Code Session — {date_display}"
+    if metadata.get("title"):
+        title = f"{metadata['title']} — Claude Code Session"
+    else:
+        title = f"Claude Code Session — {date_display}"
 
     # Inject template-controlled placeholders first, then the user-controlled
     # JSON payload last so conversation text can't collide with a placeholder.
@@ -898,8 +949,18 @@ document.addEventListener('DOMContentLoaded', function() {
     headerInner.className = 'wrap header-inner';
 
     var title = document.createElement('div');
-    title.style.cssText = 'font-family:var(--font-sans);font-size:1.125rem;font-weight:600;margin-bottom:1rem;';
-    title.textContent = 'Claude Code Session';
+    if (metadata.title) {
+        var kicker = document.createElement('div');
+        kicker.className = 'meta-label';
+        kicker.style.marginBottom = '0.35rem';
+        kicker.textContent = 'Claude Code Session';
+        headerInner.appendChild(kicker);
+        title.style.cssText = 'font-family:var(--font-sans);font-size:1.375rem;font-weight:600;margin-bottom:1rem;line-height:1.3;';
+        title.textContent = metadata.title;
+    } else {
+        title.style.cssText = 'font-family:var(--font-sans);font-size:1.125rem;font-weight:600;margin-bottom:1rem;';
+        title.textContent = 'Claude Code Session';
+    }
     headerInner.appendChild(title);
 
     var metaGrid = document.createElement('div');
@@ -1353,6 +1414,7 @@ class SessionBrowser:
                         pname,
                         s.get("session_id", ""),
                         s.get("first_prompt", ""),
+                        s.get("title", ""),
                         s.get("git_branch", ""),
                     ]
                 ).lower()
@@ -1472,7 +1534,7 @@ class SessionBrowser:
                     date = dt.strftime("%b %d")
                 except Exception:
                     date = date[:6]
-                prompt = s.get("first_prompt", "")
+                prompt = _session_label(s)
                 # Calculate space for prompt
                 prefix = f"   {sid}  {date}  "
                 prompt_w = max(0, usable_w - len(prefix))
@@ -1536,6 +1598,8 @@ class SessionBrowser:
         # Metadata block
         sid = session.get("session_id", "")
         lines.append(("label", f"  Session:  {sid[:16]}"))
+        if preview.get("title"):
+            lines.append(("label", f"  Title:    {preview['title']}"))
         if preview.get("date"):
             try:
                 dt_str = preview["date"]
@@ -1883,7 +1947,7 @@ def cmd_list(args):
         print(f"  {'─' * 60}")
         for s in sess_list:
             date = s.get("created", "")[:10] or "???"
-            prompt = s.get("first_prompt", "")[:80]
+            prompt = _session_label(s)[:80]
             sid = s["session_id"][:12]
             branch = s.get("git_branch", "")
             branch_str = f" [{branch}]" if branch else ""
