@@ -948,6 +948,24 @@ body {
     white-space: pre-wrap; word-break: break-word;
     color: var(--text-primary);
 }
+.diff-old, .diff-new {
+    font-family: var(--font-mono);
+    font-size: 0.8rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+    margin: 0; padding: 0.375rem 0.625rem;
+}
+.diff-old { background: #FBEAEA; color: #8a1f1f; border-bottom: 1px solid #EFD3D3; }
+.diff-new { background: #E9F4EB; color: #1f5f2a; }
+.diff-wrap { border: 1px solid var(--tool-border); border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }
+details.sub summary {
+    cursor: pointer; user-select: none; list-style: none;
+    font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--tool-accent); padding: 0.25rem 0;
+}
+details.sub summary::-webkit-details-marker { display: none; }
+details.sub summary::before { content: '\25b6'; display: inline-block; font-size: 0.55rem; margin-right: 0.375rem; transition: transform 0.15s ease; }
+details.sub[open] summary::before { transform: rotate(90deg); }
+details.sub .tool-input { margin-top: 0.25rem; }
 
 /* ── Session header ── */
 .session-header {
@@ -1171,16 +1189,71 @@ function renderToolUse(block) {
     var icon = el('span', '', 'display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;background:var(--tool-accent);color:white;border-radius:3px;font-size:0.65rem;font-weight:700;font-family:var(--font-mono);');
     icon.textContent = toolIcon(block.tool_name);
     hdr.appendChild(icon);
-    var tl = el('span'); tl.className = 'block-label'; tl.style.color = 'var(--tool-accent)'; tl.textContent = block.tool_name || 'Tool';
+    var tl = el('span'); tl.className = 'block-label'; tl.style.color = 'var(--tool-accent)'; tl.textContent = toolLabel(block.tool_name);
     hdr.appendChild(tl);
     w.appendChild(hdr);
 
     var bd = el('div', 'tool-scroll', 'padding:0.625rem 0.875rem;');
-    var pre = el('pre', 'tool-input', 'margin:0;');
     var fmt = fmtInput(block.tool_name, block.input);
-    pre.textContent = fmt;
-    bd.appendChild(pre); w.appendChild(bd);
+    if (fmt && typeof fmt === 'object' && fmt.nodeType) {
+        bd.appendChild(fmt);
+    } else {
+        var pre = el('pre', 'tool-input', 'margin:0;');
+        pre.textContent = fmt;
+        bd.appendChild(pre);
+    }
+    w.appendChild(bd);
     return w;
+}
+
+/* mcp__server__tool -> "server · tool"; everything else unchanged */
+function toolLabel(name) {
+    if (!name) return 'Tool';
+    if (name.indexOf('mcp__') === 0) {
+        var parts = name.slice(5).split('__');
+        if (parts.length >= 2) return parts[0] + ' \u00b7 ' + parts.slice(1).join('__');
+    }
+    return name;
+}
+
+function preNode(text) {
+    var pre = el('pre', 'tool-input', 'margin:0;');
+    pre.textContent = text;
+    return pre;
+}
+
+function subDetails(label, text) {
+    var d = document.createElement('details');
+    d.className = 'sub';
+    var sm = document.createElement('summary');
+    sm.textContent = label;
+    d.appendChild(sm);
+    d.appendChild(preNode(text));
+    return d;
+}
+
+/* Header lines as a pre, then extra nodes below it */
+function withHeader(lines, nodes) {
+    var wrap = el('div');
+    if (lines.length) wrap.appendChild(preNode(lines.join('\n')));
+    nodes.forEach(function(n) { if (n) wrap.appendChild(n); });
+    return wrap;
+}
+
+function prefixLines(text, prefix) {
+    return String(text).split('\n').map(function(l) { return prefix + l; }).join('\n');
+}
+
+function lineCount(text) { return text ? String(text).split('\n').length : 0; }
+
+function renderEditDiff(input) {
+    var lines = [];
+    if (input.file_path) lines.push('\u25b8 ' + input.file_path + (input.replace_all ? '  (replace all)' : ''));
+    var diff = el('div', 'diff-wrap');
+    var oldPre = el('pre', 'diff-old'); oldPre.textContent = prefixLines(input.old_string || '', '- ');
+    var newPre = el('pre', 'diff-new'); newPre.textContent = prefixLines(input.new_string || '', '+ ');
+    diff.appendChild(oldPre); diff.appendChild(newPre);
+    return withHeader(lines, [diff]);
 }
 
 /* ── Tool Result Block ── */
@@ -1266,9 +1339,54 @@ function fmtInput(tool, input) {
             if (input.limit) p.push('limit: ' + input.limit);
             return p.join('\n');
         case 'Write':
-            return input.file_path ? '\u25b8 ' + input.file_path : stringify(input);
+            p = [];
+            if (input.file_path) p.push('\u25b8 ' + input.file_path);
+            if (input.content === undefined) return p.length ? p.join('\n') : stringify(input);
+            return withHeader(p, [subDetails('Content \u00b7 ' + lineCount(input.content) + ' lines', input.content)]);
         case 'Edit':
-            return input.file_path ? '\u25b8 ' + input.file_path : stringify(input);
+            if (input.old_string === undefined && input.new_string === undefined) {
+                return input.file_path ? '\u25b8 ' + input.file_path : stringify(input);
+            }
+            return renderEditDiff(input);
+        case 'Agent':
+            p = [];
+            if (input.description) p.push('\u25b8 ' + input.description);
+            if (input.subagent_type) p.push('agent: ' + input.subagent_type);
+            if (input.model) p.push('model: ' + input.model);
+            if (!input.prompt) return p.length ? p.join('\n') : stringify(input);
+            return withHeader(p, [subDetails('Prompt', input.prompt)]);
+        case 'Skill':
+            p = [];
+            if (input.skill) p.push('\u25b8 /' + input.skill);
+            if (input.args) p.push(input.args);
+            return p.length ? p.join('\n') : stringify(input);
+        case 'ToolSearch':
+            return input.query ? '\u25b8 ' + input.query : stringify(input);
+        case 'AskUserQuestion':
+            if (!Array.isArray(input.questions)) return stringify(input);
+            p = [];
+            input.questions.forEach(function(q) {
+                p.push('? ' + (q.question || ''));
+                (q.options || []).forEach(function(o) { p.push('  - ' + (o.label || '')); });
+            });
+            return p.join('\n');
+        case 'Artifact':
+            p = ['\u25b8 ' + (input.action || 'publish')];
+            if (input.file_path) p.push('file: ' + input.file_path);
+            if (input.url) p.push('url: ' + input.url);
+            return p.join('\n');
+        case 'SendMessage':
+            p = [];
+            if (input.to) p.push('to: ' + input.to);
+            if (input.summary) p.push('summary: ' + input.summary);
+            if (!input.message) return p.length ? p.join('\n') : stringify(input);
+            return withHeader(p, [subDetails('Message', input.message)]);
+        case 'TodoWrite':
+            if (!Array.isArray(input.todos)) return stringify(input);
+            return input.todos.map(function(t) {
+                var mark = t.status === 'completed' ? '[x]' : (t.status === 'in_progress' ? '[~]' : '[ ]');
+                return mark + ' ' + (t.content || '');
+            }).join('\n');
         case 'Glob':
             p = [];
             if (input.pattern) p.push('pattern: ' + input.pattern);
@@ -1298,7 +1416,10 @@ function fmtInput(tool, input) {
 }
 
 function toolIcon(name) {
-    var m = {'Bash':'$','Read':'R','Write':'W','Edit':'E','Glob':'G','Grep':'/','Task':'T','WebFetch':'W','WebSearch':'S','Skill':'SK'};
+    var m = {'Bash':'$','Read':'R','Write':'W','Edit':'E','Glob':'G','Grep':'/','Task':'T','WebFetch':'W','WebSearch':'S',
+             'Skill':'/','Agent':'A','ToolSearch':'?','AskUserQuestion':'Q','Artifact':'Ar','SendMessage':'@',
+             'TodoWrite':'\u2611','Workflow':'Wf','ReportFindings':'RF'};
+    if (name && name.indexOf('mcp__') === 0) return 'M';
     return m[name] || (name ? name.charAt(0) : '?');
 }
 
