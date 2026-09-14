@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import curses
+import html
 import json
 import locale
 import os
@@ -766,7 +767,7 @@ def generate_html(messages, metadata):
     # JSON payload last so conversation text can't collide with a placeholder.
     return (
         HTML_TEMPLATE.replace("{{HEAD_ASSETS}}", _build_head_assets())
-        .replace("{{TITLE}}", title)
+        .replace("{{TITLE}}", html.escape(title, quote=False))
         .replace("{{JSON_DATA}}", json_data)
     )
 

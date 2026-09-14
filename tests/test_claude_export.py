@@ -962,3 +962,12 @@ class TestExportActions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTitleEscaping(unittest.TestCase):
+    def test_generate_html_escapes_title(self):
+        html_out = claude_export.generate_html(
+            [], {"title": "</title><script>alert(1)</script>", "date": ""}
+        )
+        self.assertNotIn("</title><script>", html_out)
+        self.assertIn("&lt;/title&gt;&lt;script&gt;", html_out)
