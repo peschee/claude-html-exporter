@@ -418,6 +418,106 @@ class TestReadSessionStub(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_read_session_stub_skips_caveat_and_command_records(self):
+        lines = [
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t1",
+                    "gitBranch": "main",
+                    "message": {
+                        "content": "<local-command-caveat>Caveat</local-command-caveat>"
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t2",
+                    "message": {
+                        "content": "<command-name>/clear</command-name>"
+                        "<command-args></command-args>"
+                    },
+                }
+            ),
+            json.dumps(
+                {"type": "user", "timestamp": "t3", "message": {"content": "real ask"}}
+            ),
+        ]
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(lines))
+            path = handle.name
+
+        try:
+            stub = claude_export._read_session_stub(path)
+            self.assertEqual(stub["first_prompt"], "real ask")
+            # created/branch still come from the first user record
+            self.assertEqual(stub["created"], "t1")
+            self.assertEqual(stub["git_branch"], "main")
+        finally:
+            os.unlink(path)
+
+    def test_read_session_stub_falls_back_to_command_when_only_commands(self):
+        lines = [
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t1",
+                    "message": {
+                        "content": "<command-name>/init</command-name>"
+                        "<command-args>--force</command-args>"
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "t2",
+                    "message": {"content": [{"type": "tool_result", "content": "x"}]},
+                }
+            ),
+        ]
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(lines))
+            path = handle.name
+
+        try:
+            stub = claude_export._read_session_stub(path)
+            self.assertEqual(stub["first_prompt"], "/init --force")
+            self.assertEqual(stub["created"], "t1")
+        finally:
+            os.unlink(path)
+
+
+class TestCleanPrompt(unittest.TestCase):
+    def test_unwraps_slash_command_with_args(self):
+        raw = (
+            "<command-name>/humanizer</command-name>\n"
+            "<command-message>humanizer</command-message>\n"
+            "<command-args>fix tone</command-args>"
+        )
+        self.assertEqual(claude_export._clean_prompt(raw), "/humanizer fix tone")
+
+    def test_unwraps_slash_command_without_args(self):
+        raw = "<command-name>/clear</command-name><command-args></command-args>"
+        self.assertEqual(claude_export._clean_prompt(raw), "/clear")
+
+    def test_drops_wrapper_blocks_and_collapses_whitespace(self):
+        raw = (
+            "<local-command-caveat>Caveat: generated</local-command-caveat>\n"
+            "<local-command-stdout>out</local-command-stdout>\n"
+            "<system-reminder>hidden</system-reminder>\n"
+            "  real   prompt\n here"
+        )
+        self.assertEqual(claude_export._clean_prompt(raw), "real prompt here")
+
+    def test_plain_and_empty(self):
+        self.assertEqual(claude_export._clean_prompt("plain text"), "plain text")
+        self.assertEqual(claude_export._clean_prompt(""), "")
+        self.assertEqual(claude_export._clean_prompt(None), "")
+
 
 class TestReadPreview(unittest.TestCase):
     def test_read_preview_skips_tool_results_and_truncates(self):

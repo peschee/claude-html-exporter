@@ -75,7 +75,7 @@ def find_sessions(project_filter=None):
                             "project": project_name,
                             "project_path": entry.get("projectPath", ""),
                             "path": entry.get("fullPath", ""),
-                            "first_prompt": entry.get("firstPrompt", ""),
+                            "first_prompt": _clean_prompt(entry.get("firstPrompt", "")),
                             "created": entry.get("created", ""),
                             "modified": entry.get("modified", ""),
                             "git_branch": entry.get("gitBranch", ""),
@@ -108,8 +108,47 @@ def find_sessions(project_filter=None):
     return sessions
 
 
+_WRAPPER_TAGS = ("local-command-caveat", "local-command-stdout", "system-reminder")
+_WRAPPER_RE = re.compile(
+    r"<(" + "|".join(_WRAPPER_TAGS) + r")>.*?</\1>", re.DOTALL
+)
+_COMMAND_NAME_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
+_COMMAND_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+_ANY_TAG_RE = re.compile(r"</?[a-z][a-z0-9-]*>")
+
+
+def _clean_prompt(text):
+    """Turn a raw user turn into something fit for a list row.
+
+    Slash commands arrive wrapped in <command-name>/<command-args> tags; local
+    command output and injected reminders arrive in their own wrappers. Those
+    tags are noise in the session list, so unwrap the command and drop the rest.
+    """
+    if not text:
+        return ""
+    m = _COMMAND_NAME_RE.search(text)
+    if m:
+        name = m.group(1).strip()
+        a = _COMMAND_ARGS_RE.search(text)
+        args = a.group(1).strip() if a else ""
+        return " ".join(x for x in (name, args) if x)
+    text = _WRAPPER_RE.sub("", text)
+    text = _ANY_TAG_RE.sub("", text)
+    return " ".join(text.split())
+
+
+def _is_slash_command(text):
+    return bool(_COMMAND_NAME_RE.search(text or ""))
+
+
 def _read_session_stub(path):
-    """Read first user line from a JSONL to extract basic info."""
+    """Read the first user turns of a JSONL to extract basic info.
+
+    `created` and `git_branch` come from the first user record. The prompt
+    prefers the first real human turn; if the session only ever ran slash
+    commands, the first command name is used instead."""
+    info = {}
+    fallback_prompt = ""
     try:
         with open(path) as f:
             for line in f:
@@ -117,18 +156,30 @@ def _read_session_stub(path):
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if obj.get("type") == "user" and not obj.get("isCompactSummary"):
-                    msg = obj.get("message", {})
-                    content = msg.get("content", "")
-                    prompt = content if isinstance(content, str) else ""
-                    return {
-                        "first_prompt": prompt[:200],
+                if obj.get("type") != "user" or obj.get("isCompactSummary"):
+                    continue
+                msg = obj.get("message", {})
+                content = msg.get("content", "")
+                raw = content if isinstance(content, str) else ""
+                if not info:
+                    info = {
+                        "first_prompt": "",
                         "created": obj.get("timestamp", ""),
                         "git_branch": obj.get("gitBranch", ""),
                     }
+                prompt = _clean_prompt(raw)
+                if not prompt:
+                    continue
+                if _is_slash_command(raw):
+                    fallback_prompt = fallback_prompt or prompt
+                    continue
+                info["first_prompt"] = prompt[:200]
+                return info
     except OSError as exc:
         _debug("read session stub failed", exc)
-    return {}
+    if info:
+        info["first_prompt"] = fallback_prompt[:200]
+    return info
 
 
 def _read_preview(path, max_lines=50, max_messages=4, max_chars=500):
