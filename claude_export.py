@@ -1001,6 +1001,60 @@ details.collapsible[open] summary .chevron { transform: rotate(90deg); }
 
 /* ── Code highlight overrides ── */
 .prose pre .hljs { background: transparent; }
+
+/* ── Navigation sidebar ── */
+:root { --nav-w: 260px; }
+.nav {
+    position: fixed; top: 0; left: 0; bottom: 0; width: var(--nav-w);
+    background: var(--page-bg); border-right: 1px solid var(--divider);
+    display: flex; flex-direction: column; z-index: 20;
+    transform: translateX(0); transition: transform 0.18s ease;
+}
+.nav-tools {
+    padding: 0.75rem 0.75rem 0.5rem; border-bottom: 1px solid var(--divider);
+    display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center;
+    font-family: var(--font-sans); font-size: 0.75rem; color: var(--text-secondary);
+}
+.nav-tools button {
+    font: inherit; font-size: 0.72rem; padding: 0.25rem 0.5rem; cursor: pointer;
+    background: #fff; color: var(--text-primary); border: 1px solid var(--divider); border-radius: 4px;
+}
+.nav-tools button:hover { border-color: var(--text-tertiary); }
+.nav-tools label { display: flex; align-items: center; gap: 0.3rem; cursor: pointer; width: 100%; margin-top: 0.25rem; }
+.nav-list { flex: 1; overflow-y: auto; padding: 0.5rem 0 2rem; }
+.nav-item {
+    display: block; padding: 0.4rem 0.75rem 0.4rem 0.625rem; border-left: 3px solid transparent;
+    font-family: var(--font-sans); font-size: 0.8rem; line-height: 1.3; color: var(--text-primary);
+    text-decoration: none; cursor: pointer;
+}
+.nav-item:hover { background: rgba(0,0,0,0.04); }
+.nav-item.active { border-left-color: var(--user-accent); background: var(--user-bg); }
+.nav-item .nav-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item .nav-time { display: block; font-family: var(--font-mono); font-size: 0.625rem; color: var(--text-tertiary); margin-top: 0.1rem; }
+.nav-compact {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.75rem;
+    font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--compact-accent); opacity: 0.8; cursor: pointer;
+}
+.nav-compact::before, .nav-compact::after { content: ''; flex: 1; border-top: 1px dashed var(--compact-accent); opacity: 0.5; }
+.nav-toggle {
+    position: fixed; top: 0.6rem; left: 0.6rem; z-index: 30; display: none;
+    font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.05em;
+    padding: 0.35rem 0.6rem; cursor: pointer; background: #fff; color: var(--text-primary);
+    border: 1px solid var(--divider); border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.nav-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.25); z-index: 19; display: none; }
+body.has-nav { padding-left: var(--nav-w); }
+body.hide-tools .tool-use, body.hide-tools .tool-result { display: none; }
+@media (max-width: 1100px) {
+    body.has-nav { padding-left: 0; }
+    .nav { transform: translateX(-100%); box-shadow: 0 0 24px rgba(0,0,0,0.15); }
+    body.nav-open .nav { transform: translateX(0); }
+    body.nav-open .nav-backdrop { display: block; }
+    .nav-toggle { display: block; }
+    body.nav-open .nav-toggle { display: none; }
+}
+@media print { .nav, .nav-toggle, .nav-backdrop { display: none !important; } body.has-nav { padding-left: 0; } }
 </style>
 </head>
 <body>
@@ -1068,17 +1122,25 @@ document.addEventListener('DOMContentLoaded', function() {
     body.className = 'wrap conversation-body';
     app.appendChild(body);
 
+    var navEntries = [];
     messages.forEach(function(msg, idx) {
         if (idx > 0) { var hr = document.createElement('hr'); hr.className = 'msg-divider'; body.appendChild(hr); }
-        if (msg.role === 'user') renderUserMessage(body, msg);
+        var section = null;
+        if (msg.role === 'user') section = renderUserMessage(body, msg);
         else if (msg.role === 'assistant') renderAssistantMessage(body, msg);
         else if (msg.role === 'tool') renderToolMessage(body, msg);
-        else if (msg.role === 'compaction') renderCompaction(body, msg);
+        else if (msg.role === 'compaction') section = renderCompaction(body, msg);
+        if (section) {
+            section.id = 'msg-' + idx;
+            navEntries.push({ id: section.id, el: section, msg: msg });
+        }
     });
 
     var spacer = document.createElement('div');
     spacer.style.height = '4rem';
     body.appendChild(spacer);
+
+    buildNav(navEntries);
 
     /* ── Syntax highlighting (post-render pass over emitted code blocks) ── */
     if (hasHljs) {
@@ -1097,6 +1159,7 @@ function renderUserMessage(container, msg) {
         else if (b.type === 'image') { section.appendChild(imageEl(b, 'margin:0.75rem 0 0;')); }
     });
     container.appendChild(section);
+    return section;
 }
 
 /* ── Assistant Message ── */
@@ -1155,6 +1218,7 @@ function renderCompaction(container, msg) {
         section.appendChild(details);
     }
     container.appendChild(section);
+    return section;
 }
 
 function fmtTokens(n) {
@@ -1183,7 +1247,7 @@ function renderThinking(block) {
 
 /* ── Tool Use Block ── */
 function renderToolUse(block) {
-    var w = el('div', '', 'margin:0.75rem 0;background:var(--tool-bg);border:1px solid var(--tool-border);border-left:4px solid var(--tool-accent);border-radius:0 6px 6px 0;overflow:hidden;');
+    var w = el('div', 'tool-use', 'margin:0.75rem 0;background:var(--tool-bg);border:1px solid var(--tool-border);border-left:4px solid var(--tool-accent);border-radius:0 6px 6px 0;overflow:hidden;');
 
     var hdr = el('div', '', 'padding:0.5rem 0.875rem;display:flex;align-items:center;gap:0.5rem;border-bottom:1px solid var(--tool-border);');
     var icon = el('span', '', 'display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;background:var(--tool-accent);color:white;border-radius:3px;font-size:0.65rem;font-weight:700;font-family:var(--font-mono);');
@@ -1264,7 +1328,7 @@ function renderToolResult(block) {
     var br = err ? 'var(--error-border)' : 'var(--result-border)';
 
     var details = document.createElement('details');
-    details.className = 'collapsible';
+    details.className = 'collapsible tool-result';
     details.style.cssText = 'margin:0.25rem 0 0.75rem;background:'+bg+';border:1px solid '+br+';border-left:4px solid '+ac+';border-radius:0 6px 6px 0;overflow:hidden;';
 
     var summary = document.createElement('summary');
@@ -1301,6 +1365,153 @@ function imageEl(img, extraStyle) {
     e.loading = 'lazy';
     e.style.cssText = 'display:block;max-width:100%;height:auto;border:1px solid var(--divider);border-radius:6px;' + (extraStyle || '');
     return e;
+}
+
+/* ── Navigation sidebar ── */
+function navLabel(text) {
+    var t = text || '';
+    /* Slash-command and caveat wrappers Claude Code adds around prompts */
+    var stripped = t.replace(/<(local-command-caveat|local-command-stdout|system-reminder)>[\s\S]*?<\/\1>/g, ' ');
+    if (stripped.trim()) t = stripped;
+    var cmd = /<command-name>([\s\S]*?)<\/command-name>/.exec(t);
+    if (cmd) {
+        var args = /<command-args>([\s\S]*?)<\/command-args>/.exec(t);
+        t = cmd[1].trim() + (args && args[1].trim() ? ' ' + args[1].trim() : '');
+    }
+    t = t.replace(/<\/?[a-z][a-z0-9-]*>/g, ' ');
+    t = t.split('\n').map(function(l) { return l.trim(); }).filter(Boolean).join(' ');
+    t = t.replace(/```[\s\S]*?```/g, ' ');
+    t = t.replace(/`([^`]*)`/g, '$1');
+    t = t.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');
+    t = t.replace(/^[#>*\-\s]+/, '');
+    t = t.replace(/[*_~]{1,3}([^*_~]+)[*_~]{1,3}/g, '$1');
+    t = t.replace(/\s+/g, ' ').trim();
+    if (t.length > 70) t = t.substring(0, 70).replace(/\s+\S*$/, '') + '…';
+    return t || '(no text)';
+}
+
+function prefGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function prefSet(key, val) { try { localStorage.setItem(key, val); } catch (e) {} }
+
+function setAllDetails(open) {
+    document.querySelectorAll('#app details').forEach(function(d) { d.open = open; });
+}
+
+function buildNav(entries) {
+    if (!entries.length) return;
+    var doc = document.body;
+    doc.classList.add('has-nav');
+
+    var nav = el('nav', 'nav');
+    var tools = el('div', 'nav-tools');
+    var collapseBtn = el('button'); collapseBtn.type = 'button'; collapseBtn.textContent = 'Collapse all';
+    var expandBtn = el('button'); expandBtn.type = 'button'; expandBtn.textContent = 'Expand all';
+    tools.appendChild(collapseBtn); tools.appendChild(expandBtn);
+    var hideLbl = el('label');
+    var hideCb = document.createElement('input'); hideCb.type = 'checkbox';
+    hideLbl.appendChild(hideCb); hideLbl.appendChild(document.createTextNode('Hide tool calls'));
+    tools.appendChild(hideLbl);
+    nav.appendChild(tools);
+
+    var list = el('div', 'nav-list');
+    var items = [];
+    entries.forEach(function(e) {
+        var item;
+        if (e.msg.role === 'compaction') {
+            item = el('div', 'nav-compact');
+            item.textContent = 'compacted';
+            item.title = 'Context compacted';
+        } else {
+            item = el('a', 'nav-item');
+            item.href = '#' + e.id;
+            var txt = '';
+            e.msg.blocks.forEach(function(b) { if (!txt && b.type === 'text') txt = b.text; });
+            if (!txt && e.msg.blocks.some(function(b) { return b.type === 'image'; })) txt = '[image]';
+            var t = el('span', 'nav-text'); t.textContent = navLabel(txt); t.title = navLabel(txt);
+            item.appendChild(t);
+            if (e.msg.timestamp) { var tm = el('span', 'nav-time'); tm.textContent = formatTime(e.msg.timestamp); item.appendChild(tm); }
+        }
+        item.addEventListener('click', function(ev) {
+            ev.preventDefault();
+            e.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            doc.classList.remove('nav-open');
+        });
+        list.appendChild(item);
+        items.push({ entry: e, item: item });
+    });
+    nav.appendChild(list);
+    document.body.appendChild(nav);
+
+    var toggle = el('button', 'nav-toggle'); toggle.type = 'button'; toggle.textContent = '☰ Prompts';
+    toggle.addEventListener('click', function() { doc.classList.add('nav-open'); });
+    document.body.appendChild(toggle);
+    var backdrop = el('div', 'nav-backdrop');
+    backdrop.addEventListener('click', function() { doc.classList.remove('nav-open'); });
+    document.body.appendChild(backdrop);
+
+    /* Collapse / expand / hide tools, persisted per browser */
+    collapseBtn.addEventListener('click', function() { setAllDetails(false); prefSet('ccx-details', 'closed'); });
+    expandBtn.addEventListener('click', function() { setAllDetails(true); prefSet('ccx-details', 'open'); });
+    var storedDetails = prefGet('ccx-details');
+    if (storedDetails === 'open') setAllDetails(true);
+    else if (storedDetails === 'closed') setAllDetails(false);
+
+    function applyHide(on) { doc.classList.toggle('hide-tools', on); hideCb.checked = on; }
+    hideCb.addEventListener('change', function() { applyHide(hideCb.checked); prefSet('ccx-hide-tools', hideCb.checked ? '1' : '0'); });
+    applyHide(prefGet('ccx-hide-tools') === '1');
+
+    /* Active entry: the prompt nearest the top of the viewport */
+    var activeIdx = -1;
+    function setActive(i) {
+        if (i === activeIdx) return;
+        if (activeIdx >= 0) items[activeIdx].item.classList.remove('active');
+        activeIdx = i;
+        if (i >= 0) {
+            items[i].item.classList.add('active');
+            var it = items[i].item, lr = list.getBoundingClientRect(), ir = it.getBoundingClientRect();
+            if (ir.top < lr.top || ir.bottom > lr.bottom) it.scrollIntoView({ block: 'nearest' });
+        }
+    }
+    var ticking = false;
+    function updateActive() {
+        ticking = false;
+        var best = -1, threshold = 80;
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].entry.el.getBoundingClientRect().top <= threshold) best = i; else break;
+        }
+        if (best < 0 && items.length) best = 0;
+        setActive(best);
+    }
+    window.addEventListener('scroll', function() {
+        if (!ticking) { ticking = true; requestAnimationFrame(updateActive); }
+    }, { passive: true });
+    updateActive();
+
+    /* Keyboard: j/k or ]/[ jump between human prompts */
+    var prompts = items.filter(function(x) { return x.entry.msg.role === 'user'; });
+    function jump(dir) {
+        if (!prompts.length) return;
+        var target = null;
+        if (dir > 0) {
+            for (var i = 0; i < prompts.length; i++) {
+                if (prompts[i].entry.el.getBoundingClientRect().top > 2) { target = prompts[i]; break; }
+            }
+            if (!target) target = prompts[prompts.length - 1];
+        } else {
+            for (var j = prompts.length - 1; j >= 0; j--) {
+                if (prompts[j].entry.el.getBoundingClientRect().top < -2) { target = prompts[j]; break; }
+            }
+            if (!target) target = prompts[0];
+        }
+        target.entry.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    document.addEventListener('keydown', function(ev) {
+        if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+        var tag = (ev.target && ev.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (ev.target && ev.target.isContentEditable)) return;
+        if (ev.key === 'j' || ev.key === ']') { ev.preventDefault(); jump(1); }
+        else if (ev.key === 'k' || ev.key === '[') { ev.preventDefault(); jump(-1); }
+    });
 }
 
 /* ── Helpers ── */
