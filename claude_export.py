@@ -13,10 +13,12 @@ Usage:
 import argparse
 import curses
 import json
+import locale
 import os
 import re
 import sys
 import traceback
+import unicodedata
 from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1295,6 +1297,33 @@ def _truncate(text, width):
     return text[: max(0, width - 3)] + "..." if width > 3 else text[:width]
 
 
+def _tui_safe_text(text):
+    """Make text safe for curses: one char per terminal cell, no controls.
+
+    Accented Latin/Cyrillic/Greek letters pass through so umlauts render.
+    Wide (CJK, fullwidth) and emoji/symbol chars become "?" because they
+    occupy two cells (or crash macOS curses) and would break the column math
+    that assumes 1 char = 1 cell. Zero-width/format and control chars are
+    dropped; tabs become a space.
+    """
+    out = []
+    for ch in text:
+        if ch == "\t":
+            out.append(" ")
+            continue
+        cat = unicodedata.category(ch)
+        if cat in ("Cc", "Cf", "Cs", "Cn"):
+            continue
+        if ord(ch) > 0xFFFF or cat == "So":
+            out.append("?")
+            continue
+        if unicodedata.east_asian_width(ch) in ("W", "F"):
+            out.append("?")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 # ---------------------------------------------------------------------------
 # TUI: Session Browser
 # ---------------------------------------------------------------------------
@@ -1884,14 +1913,20 @@ class SessionBrowser:
         h, w = self.stdscr.getmaxyx()
         if y < 0 or y >= h or x < 0 or x >= w:
             return
-        # Encode to ASCII for safety (curses on macOS can crash on emoji/CJK)
-        safe_text = text.encode("ascii", errors="replace").decode("ascii")
         available = w - x
         n = min(max_len, available)
         if n <= 0:
             return
+        safe_text = _tui_safe_text(text)[:n]
         try:
             self.stdscr.addnstr(y, x, safe_text, n, attr)
+        except UnicodeEncodeError:
+            # Terminal locale can't encode it; degrade to ASCII rather than crash.
+            ascii_text = safe_text.encode("ascii", errors="replace").decode("ascii")
+            try:
+                self.stdscr.addnstr(y, x, ascii_text, n, attr)
+            except curses.error:
+                pass
         except curses.error:
             pass  # writing to bottom-right corner raises error
 
@@ -1991,6 +2026,12 @@ def cmd_browse(args):
     def _run(stdscr):
         browser = SessionBrowser(stdscr, project_filter=args.project)
         browser.run()
+
+    # Without this Python curses encodes strings as ASCII and umlauts show as "?".
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error as exc:
+        _debug("setlocale failed, non-ASCII may not render", exc)
 
     try:
         curses.wrapper(_run)

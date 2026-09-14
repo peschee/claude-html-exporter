@@ -576,6 +576,26 @@ class TestCleanPrompt(unittest.TestCase):
         self.assertEqual(claude_export._clean_prompt(None), "")
 
 
+class TestTuiSafeText(unittest.TestCase):
+    def test_keeps_accented_latin(self):
+        self.assertEqual(claude_export._tui_safe_text("schärfen"), "schärfen")
+        self.assertEqual(claude_export._tui_safe_text("Ľubomír"), "Ľubomír")
+
+    def test_replaces_wide_and_emoji_with_question_mark(self):
+        self.assertEqual(claude_export._tui_safe_text("日本"), "??")
+        self.assertEqual(claude_export._tui_safe_text("a😀b"), "a?b")
+
+    def test_strips_zero_width_and_control_chars(self):
+        self.assertEqual(claude_export._tui_safe_text("a\u200db\x01c"), "abc")
+
+    def test_tab_becomes_space(self):
+        self.assertEqual(claude_export._tui_safe_text("a\tb"), "a b")
+
+    def test_output_length_never_exceeds_input(self):
+        text = "x\u200d日😀\tz"
+        self.assertLessEqual(len(claude_export._tui_safe_text(text)), len(text))
+
+
 class TestReadPreview(unittest.TestCase):
     def test_read_preview_skips_tool_results_and_truncates(self):
         lines = [
